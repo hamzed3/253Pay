@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # POSTGRESQL DATABASE
+  # ============================================
+  postgres:
+    image: postgres:14-alpine
+    container_name: 253pay-postgres
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-253pay_user}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-secure_password}
+      POSTGRES_DB: ${DATABASE_NAME:-253pay_db}
+    ports:
+      - "${DATABASE_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - 253pay-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-253pay_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================
+  # REDIS CACHE & OTP
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: 253pay-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - 253pay-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+  # ============================================
+  # PGADMIN (Database GUI - optionnel)
+  # ============================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: 253pay-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@253pay.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    networks:
+      - 253pay-network
+    restart: unless-stopped
+    profiles:
+      - tools
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  253pay-network:
+    driver: bridge

@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14-alpine
+    container_name: 253pay-postgres-dev
+    environment:
+      POSTGRES_USER: 253pay_user
+      POSTGRES_PASSWORD: dev_password
+      POSTGRES_DB: 253pay_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    networks:
+      - 253pay-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: 253pay-redis-dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - 253pay-network
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+
+networks:
+  253pay-network:
+    driver: bridge
