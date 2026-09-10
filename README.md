@@ -1,8 +1,8 @@
 # 253Pay — Backend
 
 Plateforme de paiement numérique pour Djibouti.
-**État : PHASE 4 — base, authentification et moteur comptable.
-Aucune route ne déplace encore d'argent : c'est la PHASE 5.**
+**État : PHASE 5 — transferts entre clients opérationnels.
+Aucun argent n'entre ni ne sort encore du système : c'est la PHASE 6.**
 
 ## Démarrage rapide
 
@@ -29,11 +29,12 @@ npm run start:dev
 | http://localhost:5555 | Prisma Studio (`npm run prisma:studio`) |
 | `POST /api/auth/otp/request` | Un code de vérification (voir `devCode`) |
 | `GET /api/wallets/me` | Le solde du portefeuille |
+| `POST /api/transfers/quote` | Montant, frais et total avant envoi |
 
 ```bash
 cd backend
-npm test                      # 52 tests unitaires (aucune base requise)
-npm run test:integration      # 66 tests contre PostgreSQL + Redis
+npm test                      # 70 tests unitaires (aucune base requise)
+npm run test:integration      # 95 tests contre PostgreSQL + Redis
 npm run prisma:studio         # explorateur de base sur :5555
 ```
 
@@ -79,7 +80,7 @@ npm run prisma:studio         # explorateur de base sur :5555
 - [x] **PHASE 2** — base de données et migrations
 - [x] **PHASE 3** — authentification et OTP
 - [x] **PHASE 4** — wallet et ledger
-- [ ] PHASE 5 — transferts
+- [x] **PHASE 5** — transferts
 - [ ] PHASE 6 — dépôts et retraits (MockProvider)
 - [ ] PHASE 7 — agents
 - [ ] PHASE 8 — marchands et QR

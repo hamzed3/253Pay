@@ -14,6 +14,9 @@ import { UsersModule } from './modules/users/users.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { LedgerModule } from './modules/ledger/ledger.module';
 import { WalletsModule } from './modules/wallets/wallets.module';
+import { FeesModule } from './modules/fees/fees.module';
+import { LimitsModule } from './modules/limits/limits.module';
+import { TransfersModule } from './modules/transfers/transfers.module';
 import { HashingModule } from './common/hashing/hashing.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -71,12 +74,15 @@ import { RolesGuard } from './common/guards/roles.guard';
     JwtModule.register({}),
 
     LedgerModule,
+    FeesModule,
+    LimitsModule,
 
     HealthModule,
     UsersModule,
     AuthModule,
     WalletsModule,
-    // PHASE 5 : TransfersModule
+    TransfersModule,
+    // PHASE 6 : DepositsModule, WithdrawalsModule
   ],
 
   // L'ORDRE COMPTE : les gardes s'exécutent dans l'ordre de déclaration.

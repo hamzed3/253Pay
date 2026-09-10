@@ -29,6 +29,6 @@ import { MockSmsSender, SMS_SENDER } from './sms/sms-sender';
     // sous contrat, seule cette ligne change.
     { provide: SMS_SENDER, useClass: MockSmsSender },
   ],
-  exports: [TokenService],
+  exports: [TokenService, PinService],
 })
 export class AuthModule {}

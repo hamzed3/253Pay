@@ -66,7 +66,7 @@ Le projet avance **par phases**. Ne génère jamais tout d'un coup.
 - [x] **PHASE 2** — base de données et migrations ✅ terminée
 - [x] **PHASE 3** — auth et OTP ✅ terminée
 - [x] **PHASE 4** — wallet et ledger ✅ terminée
-- [ ] PHASE 5 — transferts
+- [x] **PHASE 5** — transferts ✅ terminée
 - [ ] PHASE 6 — dépôts et retraits (MockProvider)
 - [ ] PHASE 7 — agents
 - [ ] PHASE 8 — marchands et QR
@@ -104,7 +104,15 @@ comptable (`LedgerService.post`) écrit des écritures doubles sous verrou
 `FOR UPDATE`, vérifie la provision depuis le ledger et rafraîchit le cache.
 Solde et relevé sont consultables ; la réconciliation cache/ledger existe.
 
-Aucune route ne déplace encore d'argent : les transferts sont la PHASE 5.
+Les transferts entre clients fonctionnent : `POST /api/transfers`, avec
+en-tête `Idempotency-Key` obligatoire, confirmation par code secret, frais
+calculés par le serveur depuis `fee_rules`, plafonds KYC appliqués **dans** la
+transaction du ledger, et annulation par écriture inverse réservée aux
+administrateurs.
+
+Aucun argent n'entre ni ne sort encore du système : dépôts et retraits sont la
+PHASE 6. Pour approvisionner un compte en développement, il faut écrire
+directement via `LedgerService.post()`.
 
 ## Commandes
 
@@ -164,6 +172,9 @@ Vérification : `curl http://localhost:3000/health` doit renvoyer
             ├── users/
             ├── ledger/       moteur comptable — le seul à déplacer de l'argent
             ├── wallets/      solde, relevé, réconciliation
+            ├── fees/         grille tarifaire, lue en base
+            ├── limits/       plafonds par niveau KYC
+            ├── transfers/    envoi d'argent entre clients
             └── audit/        journal des actions sensibles
 ```
 
@@ -190,6 +201,17 @@ comptes — tout client ayant de l'argent afficherait un solde négatif.
 Une seule fonction porte cette règle : `computeBalance()` dans
 `src/modules/ledger/ledger.rules.ts`. Tout mouvement d'argent passe par
 `LedgerService.post()`, et par lui seul.
+
+### Contrôles métier et concurrence
+
+Un contrôle qui lit un état puis écrit doit s'exécuter **sous le même verrou**
+que l'écriture, sinon deux requêtes simultanées le passent toutes les deux.
+C'est ce qui est arrivé aux plafonds : trois transferts lancés ensemble
+franchissaient le plafond journalier.
+
+`LedgerService.post()` accepte pour cela un point d'accroche `beforeWrite(tx)`,
+exécuté dans sa transaction, une fois les comptes verrouillés. Tout nouveau
+contrôle de ce type (plafonds, float agent, limites marchand) doit y passer.
 
 ### Ce que la base garantit toute seule
 

@@ -27,6 +27,21 @@ export interface PostingInput {
   reversalOfId?: string;
   /** Les écritures. Leur somme des débits doit égaler celle des crédits. */
   legs: LedgerLeg[];
+
+  /**
+   * Contrôle exécuté DANS la transaction, une fois les comptes verrouillés et
+   * juste avant l'écriture.
+   *
+   * POURQUOI ce point d'accroche : un contrôle fait avant d'appeler `post()`
+   * lit un état qui peut changer entre la lecture et l'écriture. Deux requêtes
+   * simultanées le passent alors toutes les deux. Exécuté ici, il bénéficie du
+   * verrou déjà posé sur les comptes — deux opérations du même client sont donc
+   * examinées l'une après l'autre, chacune voyant le résultat de la précédente.
+   *
+   * Le ledger ne sait rien de ce que fait ce contrôle : il lui prête seulement
+   * son verrou et son atomicité.
+   */
+  beforeWrite?: (tx: Prisma.TransactionClient) => Promise<void>;
 }
 
 export interface PostingResult {
@@ -93,6 +108,10 @@ export class LedgerService {
         const locked = await this.lockAccounts(tx, input.legs);
 
         this.assertSufficientFunds(input.legs, locked);
+
+        // Contrôles métier atomiques avec l'écriture (plafonds réglementaires,
+        // par exemple). Sous le verrou : voir PostingInput.beforeWrite.
+        if (input.beforeWrite) await input.beforeWrite(tx);
 
         const reference = await this.nextReference(tx);
 

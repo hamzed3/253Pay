@@ -241,14 +241,9 @@ Le cache ment. Appelez la route de réconciliation : le ledger fait foi.
 
 ## 8. Prochaine étape — PHASE 5
 
-Transferts entre clients :
-
-- route `POST /api/transfers` avec en-tête `Idempotency-Key` ;
-- moteur de frais lisant `fee_rules` (le backend recalcule tout, il ignore les
-  montants envoyés par le client) ;
-- contrôle des plafonds selon le niveau KYC (`transaction_limits`) ;
-- confirmation du destinataire par identité réduite (« Hamze M. ») ;
-- annulation par transaction `REVERSAL`.
+✅ Terminée. Voir [`PHASE_5_TRANSFERS.md`](./PHASE_5_TRANSFERS.md) : envoi
+d'argent, frais calculés par le serveur, plafonds KYC appliqués sous verrou, et
+annulation par écriture inverse.
 
 ## Checklist
 
