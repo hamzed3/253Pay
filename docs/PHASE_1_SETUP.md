@@ -1,321 +1,208 @@
-# PHASE 1 : Setup Environnement 🚀
+# PHASE 1 — Architecture et environnement
 
-## Objectif
-Mettre en place l'infrastructure de base du backend NestJS avec Docker, configurations et structure de dossiers.
+> État : **terminée**. Le backend démarre, se connecte à PostgreSQL et Redis,
+> expose `GET /health` et Swagger. Aucune logique financière, aucune table en
+> base : c'est le travail de la PHASE 2.
 
-## ✅ Fichiers créés
-
-### Configuration & Infrastructure
-- ✅ `docker-compose.yml` - PostgreSQL + Redis
-- ✅ `Dockerfile` - Image backend
-- ✅ `.env.example` - Variables d'environnement
-
-### NestJS Core
-- ✅ `src/main.ts` - Point d'entrée
-- ✅ `src/app.module.ts` - Module racine
-- ✅ `src/app.controller.ts` - Controller santé
-- ✅ `src/app.service.ts` - Service santé
-
-### Configuration
-- ✅ `src/config/database.config.ts` - TypeORM config
-- ✅ `tsconfig.json` - Configuration TypeScript
-- ✅ `package.json` - Dépendances
-- ✅ `nest-cli.json` - CLI NestJS
-- ✅ `.eslintrc.js` - Linting
-- ✅ `.prettierrc` - Formatage
-- ✅ `jest.config.js` - Tests unitaires
-
-### Middleware & Filtres
-- ✅ `src/common/filters/all-exceptions.filter.ts`
-- ✅ `src/common/filters/http-exception.filter.ts`
-- ✅ `src/common/interceptors/transform.interceptor.ts`
-
-### Dossiers structure
-- ✅ `src/common/decorators/`
-- ✅ `src/common/guards/`
-- ✅ `src/common/pipes/`
-- ✅ `src/common/utils/`
-- ✅ `src/database/migrations/`
-- ✅ `src/database/subscribers/`
+Le document de référence complet est [`architecture.md`](./architecture.md).
 
 ---
 
-## 📋 Comment démarrer
+## 1. Ce qui a été créé
 
-### 1️⃣ Cloner et configurer
+### Racine du dépôt
+
+| Fichier | Rôle |
+|---|---|
+| `docker-compose.yml` | PostgreSQL 16, Redis 7, pgAdmin |
+| `.env.example` | Modèle de configuration. `.env` n'est **jamais** commité |
+| `.gitignore` | Protège `.env`, les clés, `node_modules/`, `dist/` |
+| `CLAUDE.md` | Règles du projet |
+| `docs/architecture.md` | Analyse, schéma de base, ledger, sécurité |
+
+### Backend (`backend/`)
+
+| Fichier | Rôle |
+|---|---|
+| `src/main.ts` | Démarrage : helmet, CORS, validation stricte, Swagger |
+| `src/app.module.ts` | Assemblage : config, limitation de débit, Prisma, Redis, health |
+| `src/config/configuration.ts` | Accès typé à la configuration |
+| `src/config/env.validation.ts` | Validation Joi — l'app refuse de démarrer si une variable manque |
+| `src/common/money/money.ts` | **Objet `Money`** — entiers `bigint`, jamais de `float` |
+| `src/common/money/money.spec.ts` | 9 tests sur les montants |
+| `src/common/errors/error-codes.ts` | `ErrorCode` + `BusinessError` |
+| `src/common/filters/all-exceptions.filter.ts` | Format d'erreur unique + `traceId` |
+| `src/common/interceptors/logging.interceptor.ts` | Logs avec masquage des champs sensibles |
+| `src/database/prisma.service.ts` | Connexion PostgreSQL |
+| `src/database/redis.service.ts` | Connexion Redis |
+| `src/modules/health/health.controller.ts` | `GET /health` |
+| `prisma/schema.prisma` | Connexion seule — les tables arrivent en PHASE 2 |
+| `tsconfig.json` | TypeScript strict, alias `@/` vers `src/` |
+| `jest.config.js` | Configuration **unique** des tests |
+| `eslint.config.mjs` / `.prettierrc` | Lint et formatage |
+
+---
+
+## 2. Démarrage
+
+### Prérequis
+
+Node.js 20 ou plus, Docker Desktop, Git.
+
+### Étape 1 — configuration
 
 ```bash
-# Cloner le repo
-git clone <repo-url>
-cd 253Pay/backend
-
-# Créer fichier .env (copier de .env.example)
 cp .env.example .env
 ```
 
-### 2️⃣ Installer les dépendances
+Puis ouvrez `.env` et remplacez au minimum `JWT_ACCESS_SECRET` et
+`JWT_REFRESH_SECRET` (deux valeurs **différentes**, 32 caractères minimum) :
 
 ```bash
+openssl rand -hex 32
+```
+
+> Le fichier `.env` reste à la **racine** du dépôt : il est partagé entre
+> `docker-compose.yml` et le backend, qui utilisent les mêmes identifiants
+> PostgreSQL. Le backend sait le lire depuis `backend/`.
+
+### Étape 2 — infrastructure
+
+```bash
+docker compose up -d
+docker compose ps
+```
+
+Attendu : `pay253-postgres` et `pay253-redis` en `Up (healthy)`, plus
+`pay253-pgadmin`.
+
+> Les ports exposés sur votre machine sont **5433** (PostgreSQL) et **6380**
+> (Redis), pas les ports standard : cela évite tout conflit si vous avez déjà
+> PostgreSQL ou Redis installés localement.
+
+### Étape 3 — backend
+
+```bash
+cd backend
 npm install
-```
-
-**Durée** : 2-3 minutes
-
-**Qu'est-ce qui se passe** :
-- Télécharge toutes les dépendances de `package.json`
-- Crée le dossier `node_modules/`
-- Crée `package-lock.json`
-
-### 3️⃣ Lancer les conteneurs Docker
-
-```bash
-docker-compose up -d
-```
-
-**Durée** : 30-60 secondes (1ère fois)
-
-**Qu'est-ce qui se passe** :
-- PostgreSQL démarre sur `localhost:5432`
-- Redis démarre sur `localhost:6379`
-
-**Vérifier** :
-```bash
-docker-compose ps
-
-# Doit afficher :
-# NAME                       STATUS
-# 253pay-postgres           Up (healthy)
-# 253pay-redis              Up (healthy)
-```
-
-### 4️⃣ Lancer le serveur NestJS
-
-```bash
-npm run dev
-```
-
-**Durée** : 3-5 secondes
-
-**Output attendu** :
-```
-╔════════════════════════════════════════╗
-║      🇩🇯 253PAY - Financial Platform    ║
-║         Backend Server Started          ║
-╠════════════════════════════════════════╣
-║  Environment: development
-║  Port: 3000
-║  URL: http://localhost:3000
-║  API Docs: http://localhost:3000/api
-╚════════════════════════════════════════╝
+npx prisma generate     # obligatoire : sans cela @prisma/client n'existe pas
+npm run start:dev
 ```
 
 ---
 
-## 🧪 Vérifications
+## 3. Vérification de fin de phase
 
-### Health Check
+| Commande / adresse | Attendu |
+|---|---|
+| `curl http://localhost:3000/health` | `{"status":"ok","db":"up","redis":"up", ...}` |
+| http://localhost:3000/api/docs | Interface Swagger, section « health » |
+| http://localhost:5050 | pgAdmin |
+| `npm test` | 9 tests `Money` passent |
+| `npm run lint` | Aucune erreur |
+| `npm run build` | Compile sans erreur |
 
-Ouvre ton navigateur ou fait un `curl` :
+### Tester le cas dégradé
+
+C'est le test le plus important de cette phase : un serveur qui répond « ok »
+alors que sa base est tombée est plus dangereux qu'un serveur éteint.
 
 ```bash
-curl http://localhost:3000/health
+docker compose stop redis
+curl -i http://localhost:3000/health
 ```
 
-**Réponse attendue** :
+Attendu : **HTTP 503**, avec le détail de la dépendance en panne :
+
 ```json
 {
-  "status": "✅ API is running",
-  "timestamp": "2024-01-01T12:00:00.000Z",
-  "environment": "development"
+  "success": false,
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "Service Unavailable Exception",
+    "details": { "status": "degraded", "db": "up", "redis": "down" }
+  },
+  "traceId": "..."
 }
 ```
 
-### Swagger Documentation
-
-Visite : **http://localhost:3000/api**
-
-Tu devrais voir :
-- ✅ "Health" section
-- ✅ GET `/health` endpoint documenté
-
-### Vérifier les conteneurs
-
 ```bash
-# Voir les logs
-docker-compose logs postgres
-docker-compose logs redis
-
-# Se connecter à PostgreSQL
-psql -h localhost -U 253pay_user -d 253pay_db
-
-# Ou vérifier Redis
-redis-cli ping
-# Réponse : PONG
+docker compose start redis    # retour à HTTP 200
 ```
 
 ---
 
-## 🐛 Erreurs courantes et solutions
+## 4. Erreurs fréquentes
 
-### ❌ Erreur : "Port 5432 already in use"
+### « Config validation error: "DATABASE_URL" is required »
 
-**Cause** : Autre instance PostgreSQL en cours.
+Le fichier `.env` n'existe pas encore. Faites `cp .env.example .env` à la
+**racine** du dépôt (pas dans `backend/`).
 
-**Solution** :
+### « Cannot find module '@prisma/client' »
+
+Vous avez oublié `npx prisma generate`. Le client Prisma est généré à partir de
+`prisma/schema.prisma`, il n'est pas livré tel quel par `npm install`.
+
+### « Port 5433 already in use »
+
+Un ancien conteneur tourne encore :
+
 ```bash
-# Arrêter l'ancienne instance
-docker-compose down
-
-# Supprimer les données (optionnel)
-docker-compose down -v
-
-# Redémarrer
-docker-compose up -d
+docker compose down        # ajoutez -v pour effacer aussi les données
+docker compose up -d
 ```
 
-### ❌ Erreur : "Cannot connect to database"
+### « EADDRINUSE: address already in use :::3000 »
 
-**Cause** : PostgreSQL pas encore prêt.
+Un autre processus occupe le port 3000. Sous Windows :
 
-**Solution** :
-```bash
-# Attendre la santé du conteneur
-docker-compose logs postgres
-
-# Quand tu vois "database system is ready to accept connections"
-# Relance npm run dev
+```powershell
+netstat -ano | findstr :3000
+taskkill /PID <PID> /F
 ```
 
-### ❌ Erreur : "npm ERR! 404"
+### `/health` renvoie 503 avec `"db":"down"`
 
-**Cause** : Dépendance non trouvée (réseau, typo).
+PostgreSQL n'a pas fini de démarrer. Vérifiez avec `docker compose logs postgres`
+et attendez « database system is ready to accept connections ».
 
-**Solution** :
-```bash
-# Vider le cache npm
-npm cache clean --force
+### « Multiple configurations found » au lancement de Jest
 
-# Réinstaller
-rm -rf node_modules package-lock.json
-npm install
-```
-
-### ❌ Erreur : "EADDRINUSE: address already in use :::3000"
-
-**Cause** : Autre processus sur le port 3000.
-
-**Solution** :
-```bash
-# Trouver le PID
-lsof -i :3000
-
-# Tuer le processus
-kill -9 <PID>
-
-# Redémarrer
-npm run dev
-```
+Ne réintroduisez pas de bloc `"jest"` dans `package.json` : la configuration des
+tests vit uniquement dans `jest.config.js`.
 
 ---
 
-## 📁 Structure créée
+## 5. Points d'architecture à retenir
 
-```
-backend/
-├── src/
-│   ├── main.ts                    ← Point d'entrée
-│   ├── app.module.ts              ← Module root
-│   ├── app.controller.ts          ← GET /health
-│   ├── app.service.ts             ← Logique métier
-│   │
-│   ├── config/
-│   │   └── database.config.ts     ← Config TypeORM
-│   │
-│   ├── common/
-│   │   ├── filters/               ← Exception handling
-│   │   ├── interceptors/          ← Logging, transform
-│   │   ├── guards/                ← Auth (à venir)
-│   │   ├── decorators/            ← Custom (à venir)
-│   │   ├── pipes/                 ← Validation (à venir)
-│   │   └── utils/                 ← Helpers (à venir)
-│   │
-│   └── database/
-│       ├── migrations/            ← SQL migrations
-│       └── subscribers/           ← Auto-update listeners
-│
-├── package.json                   ← Dépendances
-├── tsconfig.json                  ← TypeScript config
-├── jest.config.js                 ← Tests config
-├── .eslintrc.js                   ← Linting
-├── .prettierrc                    ← Format code
-��── docker-compose.yml             ← Services
-├── Dockerfile                     ← Image
-└── .env.example                   ← Vars template
-```
+1. **`Money` est obligatoire.** `Money.fromMajor('1000').minor === 100000n`.
+   Aucun montant ne doit jamais être un `number` décimal.
+2. **Toute erreur métier lève un `BusinessError`** avec un `ErrorCode`, jamais
+   une chaîne libre : le mobile doit pouvoir traduire en fr / so / ar / en.
+3. **Validation stricte des entrées.** `forbidNonWhitelisted` rejette tout champ
+   non prévu : sur une API financière, c'est presque toujours un abus.
+4. **Aucun secret dans les logs.** L'intercepteur masque `pin`, `otp`, `token`,
+   `password`, `documentNumber`.
+5. **Swagger est désactivé en production** (`NODE_ENV=production`).
 
 ---
 
-## ⚙️ Commandes utiles
+## 6. Prochaine étape — PHASE 2
 
-```bash
-# Développement
-npm run dev           # Watch mode
-npm run build         # Build production
-npm run prod          # Run production build
+Base de données et migrations :
 
-# Linting
-npm run lint          # Check + fix code style
+- tables `users`, `wallets`, `ledger_accounts`, `ledger_entries`, `transactions`
+- contraintes d'intégrité et index (voir `architecture.md`, section 4)
+- migrations Prisma et jeu de données de test
 
-# Tests (à venir)
-npm test              # Run tests
-npm run test:watch    # Watch mode
-npm run test:cov      # Coverage
+## Checklist
 
-# Migrations (à venir)
-npm run migration:generate  # Create migration
-npm run migration:run       # Run migrations
-npm run migration:revert    # Revert last
-
-# Docker
-docker-compose up -d        # Démarrer
-docker-compose logs -f      # Voir logs
-docker-compose down         # Arrêter
-docker-compose down -v      # Arrêter + supprimer données
-```
-
----
-
-## 🎯 Prochaine étape : PHASE 2
-
-Une fois que tu as :
-- ✅ npm run dev fonctionnant
-- ✅ GET /health retournant 200
-- ✅ Swagger disponible à /api
-
-Dis-moi **"PHASE 2"** et nous créerons :
-- Schéma de base de données complet
-- Migrations TypeORM
-- Seeders pour données de test
-
----
-
-## 📚 Ressources
-
-- [NestJS Docs](https://docs.nestjs.com)
-- [TypeORM Docs](https://typeorm.io)
-- [PostgreSQL Docs](https://www.postgresql.org/docs)
-- [Docker Compose Docs](https://docs.docker.com/compose)
-
----
-
-## ✅ Checklist complète
-
-- [ ] `npm install` fait
-- [ ] `.env` créé depuis `.env.example`
-- [ ] `docker-compose up -d` OK (2 conteneurs sains)
-- [ ] `npm run dev` marche sans erreurs
-- [ ] `curl http://localhost:3000/health` retourne 200
-- [ ] Swagger accessible à `http://localhost:3000/api`
-- [ ] Code formaté avec `npm run lint`
-
-Une fois cette checklist complète, nous avançons ! 🚀
+- [ ] `.env` créé à la racine, secrets JWT remplacés
+- [ ] `docker compose ps` → conteneurs sains
+- [ ] `npm install` puis `npx prisma generate` faits
+- [ ] `npm run start:dev` démarre sans erreur
+- [ ] `curl http://localhost:3000/health` → `"status":"ok"`
+- [ ] Swagger accessible sur `/api/docs`
+- [ ] `npm test` → 9 tests passent
+- [ ] Cas dégradé vérifié (503 quand Redis est arrêté)

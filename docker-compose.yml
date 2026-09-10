@@ -1,0 +1,58 @@
+# 253Pay — services d'infrastructure locaux
+# Démarrer :  docker compose up -d
+# Arrêter  :  docker compose down
+# Tout effacer (données comprises) : docker compose down -v
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pay253-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pay253}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-pay253}
+    ports:
+      # 5433 sur votre machine -> 5432 dans le conteneur
+      # (évite le conflit si PostgreSQL est déjà installé localement)
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pay253_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pay253} -d ${POSTGRES_DB:-pay253}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: pay253-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    volumes:
+      - pay253_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pay253-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@253pay.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pay253_pgdata:
+  pay253_redisdata:
