@@ -65,7 +65,7 @@ Le projet avance **par phases**. Ne génère jamais tout d'un coup.
 - [x] **PHASE 1** — architecture et environnement ✅ terminée
 - [x] **PHASE 2** — base de données et migrations ✅ terminée
 - [x] **PHASE 3** — auth et OTP ✅ terminée
-- [ ] PHASE 4 — wallet et ledger
+- [x] **PHASE 4** — wallet et ledger ✅ terminée
 - [ ] PHASE 5 — transferts
 - [ ] PHASE 6 — dépôts et retraits (MockProvider)
 - [ ] PHASE 7 — agents
@@ -98,8 +98,13 @@ global), on les ouvre avec `@Public()`.
 **Aucun opérateur SMS n'est branché** : le code se lit dans la réponse HTTP
 tant que `OTP_EXPOSE_IN_RESPONSE=true` (interdit en production).
 
-Aucune logique financière pour l'instant, et aucun portefeuille n'est encore
-créé à l'inscription : c'est la PHASE 4.
+Le portefeuille est créé à l'inscription, dans la même transaction que
+l'utilisateur, avec son compte de ledger de type `LIABILITY`. Le moteur
+comptable (`LedgerService.post`) écrit des écritures doubles sous verrou
+`FOR UPDATE`, vérifie la provision depuis le ledger et rafraîchit le cache.
+Solde et relevé sont consultables ; la réconciliation cache/ledger existe.
+
+Aucune route ne déplace encore d'argent : les transferts sont la PHASE 5.
 
 ## Commandes
 
@@ -157,6 +162,8 @@ Vérification : `curl http://localhost:3000/health` doit renvoyer
             ├── health/
             ├── auth/         inscription, OTP, connexion, sessions
             ├── users/
+            ├── ledger/       moteur comptable — le seul à déplacer de l'argent
+            ├── wallets/      solde, relevé, réconciliation
             └── audit/        journal des actions sensibles
 ```
 
@@ -168,6 +175,21 @@ Vérification : `curl http://localhost:3000/health` doit renvoyer
 - PIN et OTP : Argon2id (secrets devinables). Jetons : SHA-256 (512 bits
   d'aléa, rien à ralentir). Voir `src/common/hashing/hashing.service.ts`.
 - Tout numéro passe par `normalizePhone()` avant d'être lu ou écrit.
+
+### Comptabilité — la convention
+
+Chaque compte a un **sens naturel**, celui dans lequel il augmente :
+
+- `ASSET`, `EXPENSE` augmentent au **DÉBIT** (ex. `SYSTEM_CASH`) ;
+- `LIABILITY`, `REVENUE`, `EQUITY` augmentent au **CRÉDIT**.
+
+Le portefeuille d'un client est une `LIABILITY` : son solde est
+`crédits − débits`. Ne jamais appliquer « débit moins crédit » à tous les
+comptes — tout client ayant de l'argent afficherait un solde négatif.
+
+Une seule fonction porte cette règle : `computeBalance()` dans
+`src/modules/ledger/ledger.rules.ts`. Tout mouvement d'argent passe par
+`LedgerService.post()`, et par lui seul.
 
 ### Ce que la base garantit toute seule
 

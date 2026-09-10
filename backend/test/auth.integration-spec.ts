@@ -47,8 +47,8 @@ beforeAll(async () => {
   await app.init();
 
   prisma = new PrismaClient();
+  // La base Redis de test est déjà vidée par test/global-setup.ts.
   redis = new Redis(process.env.REDIS_URL!);
-  await redis.flushdb();
 
   pinService = app.get(PinService);
 });

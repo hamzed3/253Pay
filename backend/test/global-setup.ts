@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { config as loadEnv } from 'dotenv';
 import { PrismaClient } from '@prisma/client';
+import Redis from 'ioredis';
 
 /**
  * Prépare une base JETABLE pour les tests d'intégration.
@@ -74,6 +75,20 @@ export default async function globalSetup(): Promise<void> {
   const redisUrl = new URL(process.env.REDIS_URL ?? 'redis://localhost:6380');
   redisUrl.pathname = '/1';
   process.env.REDIS_URL = redisUrl.toString();
+
+  // ...et on la VIDE, exactement comme la base PostgreSQL est recréée.
+  //
+  // Sans cela, les délais anti-spam et les compteurs de quota survivaient d'une
+  // exécution à l'autre : un test réutilisant un numéro moins de 60 secondes
+  // après le précédent recevait un 429 et échouait sans raison apparente.
+  // Une suite de tests instable sur un ledger est pire qu'une suite absente :
+  // on finit par ignorer ses échecs.
+  const redis = new Redis(redisUrl.toString());
+  try {
+    await redis.flushdb();
+  } finally {
+    await redis.quit();
+  }
 
   // Toutes les requêtes de test partent de 127.0.0.1. Les quotas PAR IP
   // verraient donc un seul client très bavard : on les relâche, sans toucher

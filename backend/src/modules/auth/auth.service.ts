@@ -5,6 +5,7 @@ import { normalizePhone } from '../../common/phone/phone';
 import { PrismaService } from '../../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { UsersService } from '../users/users.service';
+import { WalletsService } from '../wallets/wallets.service';
 import { OtpService } from './otp.service';
 import { PinService } from './pin.service';
 import { TokenPair, TokenService } from './token.service';
@@ -46,6 +47,7 @@ export class AuthService implements OnModuleInit {
     private readonly pin: PinService,
     private readonly tokens: TokenService,
     private readonly audit: AuditService,
+    private readonly wallets: WalletsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -102,26 +104,34 @@ export class AuthService implements OnModuleInit {
 
     const pinHash = await this.pin.hash(dto.pin);
 
-    const user = await this.prisma.user.create({
-      data: {
-        phone,
-        firstName: dto.firstName.trim(),
-        lastName: dto.lastName.trim(),
-        pinHash,
-        // Le code reçu par SMS prouve que le numéro appartient bien au client :
-        // le compte est donc actif immédiatement.
-        status: 'ACTIVE',
-        phoneVerifiedAt: new Date(),
-        devices: {
-          create: {
-            deviceId: dto.device.deviceId,
-            platform: dto.device.platform,
-            model: dto.device.model,
-            // L'appareil qui a servi à l'inscription est de confiance.
-            trusted: true,
+    // Utilisateur ET portefeuille dans une SEULE transaction : un compte sans
+    // portefeuille serait inutilisable, et il faudrait le réparer à la main.
+    const user = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          phone,
+          firstName: dto.firstName.trim(),
+          lastName: dto.lastName.trim(),
+          pinHash,
+          // Le code reçu par SMS prouve que le numéro appartient bien au client :
+          // le compte est donc actif immédiatement.
+          status: 'ACTIVE',
+          phoneVerifiedAt: new Date(),
+          devices: {
+            create: {
+              deviceId: dto.device.deviceId,
+              platform: dto.device.platform,
+              model: dto.device.model,
+              // L'appareil qui a servi à l'inscription est de confiance.
+              trusted: true,
+            },
           },
         },
-      },
+      });
+
+      await this.wallets.createForUser(created.id, { client: tx });
+
+      return created;
     });
 
     await this.audit.record({
@@ -140,8 +150,6 @@ export class AuthService implements OnModuleInit {
       userAgent: context.userAgent,
     });
 
-    // PHASE 4 : c'est ici que sera créé le portefeuille du client, avec son
-    // compte de ledger. Aucun portefeuille n'existe pour l'instant.
     return { ...pair, user: this.users.toPublicProfile(user) };
   }
 

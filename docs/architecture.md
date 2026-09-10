@@ -263,14 +263,38 @@ userB.balance += 5000;   // le serveur plante ici
 
 Chaque mouvement d'argent est enregistré **deux fois** : d'où il vient (crédit) et où il va (débit). La somme des débits égale toujours la somme des crédits. Sinon, il y a un bug — et on le détecte immédiatement, avant que l'argent ne soit perdu.
 
+### La convention : le sens naturel de chaque compte
+
+> ⚠️ **Corrigé en PHASE 4.** Ce document présentait initialement la convention
+> inverse (portefeuille crédité quand il se vide, produits augmentant au débit).
+> Elle contredisait le schéma de base, qui type les portefeuilles clients en
+> `LIABILITY`, et surtout la comptabilité standard qu'attend un auditeur.
+> Le code implémente la convention ci-dessous. Voir
+> `docs/PHASE_4_WALLET_LEDGER.md`.
+
+Chaque type de compte a un sens dans lequel il **augmente** :
+
+| Type | Augmente au | Exemple |
+|---|---|---|
+| `ASSET` — ce que nous possédons | DÉBIT | `SYSTEM_CASH` |
+| `EXPENSE` — ce que nous dépensons | DÉBIT | commissions versées |
+| `LIABILITY` — ce que nous devons | CRÉDIT | **portefeuille client** |
+| `REVENUE` — ce que nous gagnons | CRÉDIT | `SYSTEM_REVENUE` |
+| `EQUITY` — les fonds propres | CRÉDIT | capital |
+
+Le portefeuille d'un client est une **dette** : cet argent ne nous appartient
+pas, nous le lui devons. Son solde augmente donc au crédit. C'est ce qui rend
+visible, dans les comptes, que l'argent des clients n'est pas notre chiffre
+d'affaires.
+
 ### Exemple : transfert de 5 000 FDJ, 50 FDJ de frais
 
-| Compte | Débit | Crédit |
-|---|---|---|
-| Wallet A | | 5 050 |
-| Wallet B | 5 000 | |
-| Revenus 253Pay | 50 | |
-| **Total** | **5 050** | **5 050** |
+| Compte | Débit | Crédit | Effet |
+|---|---|---|---|
+| Wallet A (payeur) | 5 050 | | notre dette envers lui diminue |
+| Wallet B (bénéficiaire) | | 5 000 | notre dette envers lui augmente |
+| Revenus 253Pay | | 50 | notre produit augmente |
+| **Total** | **5 050** | **5 050** | |
 
 Équilibré. Ces lignes sont écrites dans **une seule transaction PostgreSQL** :
 
@@ -308,9 +332,22 @@ Un dépôt ne crée pas d'argent : il déplace de `SYSTEM_CASH` vers le wallet d
 `wallets.available_minor` n'est qu'un **cache de performance**. La vérité est toujours :
 
 ```sql
+-- Pour un compte de type LIABILITY (portefeuille client, float agent) :
+SELECT SUM(CASE WHEN direction='CREDIT' THEN amount_minor ELSE -amount_minor END)
+FROM ledger_entries WHERE account_id = :id;
+
+-- Pour un compte de type ASSET (SYSTEM_CASH), c'est l'inverse :
 SELECT SUM(CASE WHEN direction='DEBIT' THEN amount_minor ELSE -amount_minor END)
 FROM ledger_entries WHERE account_id = :id;
 ```
+
+Autrement dit : on compte positivement les écritures qui vont dans le **sens
+naturel** du compte. Appliquer « débit moins crédit » à tous les comptes
+donnerait un solde négatif à tout client ayant de l'argent — c'est l'erreur la
+plus fréquente sur ce sujet.
+
+Le code fait cela en un seul endroit : `computeBalance()` dans
+`backend/src/modules/ledger/ledger.rules.ts`.
 
 Une tâche quotidienne compare le cache et le ledger. Un écart déclenche une alerte.
 
@@ -357,9 +394,9 @@ Le client remet 10 000 FDJ en espèces à l'agent. En échange :
 
 | Compte | Débit | Crédit |
 |---|---|---|
-| Wallet client | 10 000 | |
-| Float agent | | 10 000 |
-| Commission agent | 150 | |
+| Wallet client | | 10 000 |
+| Float agent | 10 000 | |
+| Commission agent (charge) | 150 | |
 | SYSTEM_COMMISSION | | 150 |
 
 Le float de l'agent baisse, sa commission monte. Les espèces restent physiquement chez lui : il les déposera en banque ou les réutilisera pour les retraits.

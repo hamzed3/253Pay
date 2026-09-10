@@ -12,6 +12,8 @@ import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { LedgerModule } from './modules/ledger/ledger.module';
+import { WalletsModule } from './modules/wallets/wallets.module';
 import { HashingModule } from './common/hashing/hashing.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -68,10 +70,13 @@ import { RolesGuard } from './common/guards/roles.guard';
     // JwtModule global : le JwtAuthGuard en a besoin pour vérifier les jetons.
     JwtModule.register({}),
 
+    LedgerModule,
+
     HealthModule,
     UsersModule,
     AuthModule,
-    // PHASE 4 : WalletsModule, LedgerModule
+    WalletsModule,
+    // PHASE 5 : TransfersModule
   ],
 
   // L'ORDRE COMPTE : les gardes s'exécutent dans l'ordre de déclaration.

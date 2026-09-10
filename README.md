@@ -1,8 +1,8 @@
 # 253Pay — Backend
 
 Plateforme de paiement numérique pour Djibouti.
-**État : PHASE 3 — base de données et authentification.
-Aucune logique financière : c'est la PHASE 4.**
+**État : PHASE 4 — base, authentification et moteur comptable.
+Aucune route ne déplace encore d'argent : c'est la PHASE 5.**
 
 ## Démarrage rapide
 
@@ -28,11 +28,12 @@ npm run start:dev
 | http://localhost:5050 | pgAdmin |
 | http://localhost:5555 | Prisma Studio (`npm run prisma:studio`) |
 | `POST /api/auth/otp/request` | Un code de vérification (voir `devCode`) |
+| `GET /api/wallets/me` | Le solde du portefeuille |
 
 ```bash
 cd backend
-npm test                      # 36 tests unitaires (aucune base requise)
-npm run test:integration      # 46 tests contre PostgreSQL + Redis
+npm test                      # 52 tests unitaires (aucune base requise)
+npm run test:integration      # 66 tests contre PostgreSQL + Redis
 npm run prisma:studio         # explorateur de base sur :5555
 ```
 
@@ -64,6 +65,7 @@ npm run prisma:studio         # explorateur de base sur :5555
 ## Règles du projet
 
 1. Aucun montant en `float`. Toujours l'objet `Money` (entiers `bigint`).
+   Tout mouvement d'argent passe par `LedgerService.post()`, sous verrou.
 2. Aucune logique financière côté mobile. Le backend décide, le mobile affiche.
 3. `.env` n'entre jamais dans Git.
 4. Aucune transaction n'est supprimée ni modifiée après COMPLETED.
@@ -76,7 +78,7 @@ npm run prisma:studio         # explorateur de base sur :5555
 - [x] **PHASE 1** — architecture et environnement
 - [x] **PHASE 2** — base de données et migrations
 - [x] **PHASE 3** — authentification et OTP
-- [ ] PHASE 4 — wallet et ledger
+- [x] **PHASE 4** — wallet et ledger
 - [ ] PHASE 5 — transferts
 - [ ] PHASE 6 — dépôts et retraits (MockProvider)
 - [ ] PHASE 7 — agents

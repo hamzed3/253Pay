@@ -250,13 +250,9 @@ Ces points ne bloquent pas les phases suivantes, mais ils devront être traités
 
 ## 9. Prochaine étape — PHASE 4
 
-Wallet et ledger :
-
-- création du portefeuille et de son compte de ledger à l'inscription ;
-- `LedgerService` : écritures doubles dans une seule transaction PostgreSQL,
-  avec `SELECT ... FOR UPDATE` et verrouillage par UUID croissant ;
-- consultation du solde et du relevé de compte ;
-- réconciliation cache / ledger.
+✅ Terminée. Voir [`PHASE_4_WALLET_LEDGER.md`](./PHASE_4_WALLET_LEDGER.md) :
+portefeuille créé à l'inscription, moteur d'écriture double sous verrou,
+solde, relevé et réconciliation.
 
 ## Checklist
 
