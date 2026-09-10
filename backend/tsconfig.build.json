@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  // Le build de production ne compile que src/. Sans ce fichier, tsconfig.json
+  // embarque aussi prisma/ et test/, ce qui déplace la sortie en dist/src/
+  // et casse `npm run start:prod` (qui lance dist/main).
+  "exclude": ["node_modules", "dist", "test", "prisma", "prisma.config.ts", "**/*.spec.ts"]
+}

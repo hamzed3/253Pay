@@ -190,11 +190,9 @@ tests vit uniquement dans `jest.config.js`.
 
 ## 6. Prochaine étape — PHASE 2
 
-Base de données et migrations :
-
-- tables `users`, `wallets`, `ledger_accounts`, `ledger_entries`, `transactions`
-- contraintes d'intégrité et index (voir `architecture.md`, section 4)
-- migrations Prisma et jeu de données de test
+✅ Terminée. Voir [`PHASE_2_DATABASE.md`](./PHASE_2_DATABASE.md) : les 20 tables,
+les contraintes et déclencheurs qui rendent le ledger immuable, les migrations
+et les données de référence.
 
 ## Checklist
 

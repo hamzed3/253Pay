@@ -1,7 +1,8 @@
 # 253Pay — Backend
 
 Plateforme de paiement numérique pour Djibouti.
-**État : PHASE 1 — squelette technique. Aucune logique financière.**
+**État : PHASE 2 — squelette technique et base de données.
+Aucune logique financière : c'est la PHASE 4.**
 
 ## Démarrage rapide
 
@@ -13,7 +14,8 @@ docker compose up -d
 # 2. Backend
 cd backend
 npm install
-npx prisma generate
+npm run prisma:migrate        # crée les 20 tables
+npm run prisma:seed           # plan comptable, tarifs, plafonds
 npm run start:dev
 ```
 
@@ -24,9 +26,13 @@ npm run start:dev
 | http://localhost:3000/health | `{"status":"ok","db":"up","redis":"up"}` |
 | http://localhost:3000/api/docs | Interface Swagger |
 | http://localhost:5050 | pgAdmin |
+| http://localhost:5555 | Prisma Studio (`npm run prisma:studio`) |
 
 ```bash
-cd backend && npm test        # les tests de Money doivent passer
+cd backend
+npm test                      # 9 tests unitaires (aucune base requise)
+npm run test:integration      # 18 tests contre une vraie base PostgreSQL
+npm run prisma:studio         # explorateur de base sur :5555
 ```
 
 ## Structure
@@ -36,7 +42,11 @@ cd backend && npm test        # les tests de Money doivent passer
 ├── docker-compose.yml    PostgreSQL 16 · Redis 7 · pgAdmin
 ├── .env.example          modèle de configuration (.env n'est jamais commité)
 └── backend/
-    ├── prisma/schema.prisma
+    ├── prisma/
+    │   ├── schema.prisma     les 20 tables
+    │   ├── migrations/       SQL versionné
+    │   └── seed.ts           données de référence
+    ├── test/                 tests d'intégration
     └── src/
         ├── main.ts               démarrage, sécurité, Swagger
         ├── app.module.ts         assemblage des modules
@@ -57,11 +67,13 @@ cd backend && npm test        # les tests de Money doivent passer
 3. `.env` n'entre jamais dans Git.
 4. Aucune transaction n'est supprimée ni modifiée après COMPLETED.
 5. Aucun PIN, OTP ou token dans les logs.
+6. Les règles 1, 2 et 4 ne sont pas que des conventions : depuis la PHASE 2,
+   PostgreSQL les fait respecter par contraintes et déclencheurs.
 
 ## Phases
 
 - [x] **PHASE 1** — architecture et environnement
-- [ ] PHASE 2 — base de données et migrations
+- [x] **PHASE 2** — base de données et migrations
 - [ ] PHASE 3 — authentification et OTP
 - [ ] PHASE 4 — wallet et ledger
 - [ ] PHASE 5 — transferts

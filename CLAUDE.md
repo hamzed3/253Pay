@@ -63,7 +63,7 @@ Environnement de dev : **Windows**.
 Le projet avance **par phases**. Ne génère jamais tout d'un coup.
 
 - [x] **PHASE 1** — architecture et environnement ✅ terminée
-- [ ] PHASE 2 — base de données et migrations
+- [x] **PHASE 2** — base de données et migrations ✅ terminée
 - [ ] PHASE 3 — auth et OTP
 - [ ] PHASE 4 — wallet et ledger
 - [ ] PHASE 5 — transferts
@@ -82,9 +82,18 @@ avant de passer à la suite.
 
 ## État actuel
 
-PHASE 1 livrée. Le backend démarre, se connecte à PostgreSQL et Redis, expose
-`GET /health` et Swagger. `prisma/schema.prisma` ne contient encore aucune
-table : c'est le travail de la PHASE 2.
+PHASES 1 et 2 livrées. Le backend démarre, se connecte à PostgreSQL et Redis,
+expose `GET /health` et Swagger.
+
+La base contient les 20 tables du projet, avec leurs contraintes et leurs
+déclencheurs : le ledger est immuable, un ledger déséquilibré est rejeté au
+COMMIT, un solde négatif est impossible et une transaction terminée est figée.
+Les données de référence (plan comptable système, tarifs, plafonds KYC,
+fournisseur MOCK) se chargent avec `npm run prisma:seed`.
+
+Aucune logique financière côté application pour l'instant : c'est la PHASE 4.
+Aucun utilisateur n'existe encore — créer un compte suppose le hachage du PIN,
+défini en PHASE 3.
 
 ## Commandes
 
@@ -97,10 +106,14 @@ docker compose down
 # Backend
 cd backend
 npm install
-npx prisma generate
+npm run prisma:migrate        # crée/applique les migrations
+npm run prisma:seed           # données de référence (idempotent)
 npm run start:dev             # http://localhost:3000
-npm test
+
+npm test                      # tests unitaires, sans base
+npm run test:integration      # tests d'intégration, PostgreSQL requis
 npm run lint
+npm run prisma:studio         # explorateur de base
 ```
 
 Vérification : `curl http://localhost:3000/health` doit renvoyer
@@ -113,18 +126,38 @@ Vérification : `curl http://localhost:3000/health` doit renvoyer
 ├── docker-compose.yml
 ├── .env.example              (.env n'est jamais commité)
 ├── docs/architecture.md      document de référence complet
-└── backend/src/
-    ├── main.ts               helmet, CORS, validation, Swagger
-    ├── app.module.ts
-    ├── config/               validation des variables d'env (Joi)
-    ├── common/
-    │   ├── money/            objet Money — à utiliser partout
-    │   ├── errors/           ErrorCode + BusinessError
-    │   ├── filters/          format d'erreur unique
-    │   └── interceptors/     logs + masquage des champs sensibles
-    ├── database/             PrismaService, RedisService
-    └── modules/health/
+└── backend/
+    ├── prisma/
+    │   ├── schema.prisma     les 20 tables
+    │   ├── migrations/       SQL versionné — jamais réécrit une fois appliqué
+    │   └── seed.ts           données de référence
+    ├── test/                 tests d'intégration (base jetable)
+    └── src/
+        ├── main.ts           helmet, CORS, validation, Swagger
+        ├── app.module.ts
+        ├── config/           validation des variables d'env (Joi)
+        ├── common/
+        │   ├── money/        objet Money — à utiliser partout
+        │   ├── errors/       ErrorCode + BusinessError
+        │   ├── filters/      format d'erreur unique
+        │   └── interceptors/ logs + masquage des champs sensibles
+        ├── database/         PrismaService, RedisService
+        └── modules/health/
 ```
+
+### Ce que la base garantit toute seule
+
+Ces règles ne sont pas des conventions : PostgreSQL les fait respecter, même
+face à une requête manuelle. Ne cherchez pas à les contourner dans le code —
+elles sont là pour vous.
+
+- une écriture de `ledger_entries` ne se modifie ni ne se supprime ;
+- la somme des débits d'une transaction doit égaler la somme des crédits,
+  vérifiée au COMMIT ;
+- `wallets.available_minor` ne peut pas devenir négatif ;
+- une transaction `COMPLETED` ne change plus, sauf pour passer à `REVERSED` ;
+- une transaction ne se supprime jamais ;
+- une `Idempotency-Key` ne sert qu'une fois.
 
 ## Conventions de code
 
