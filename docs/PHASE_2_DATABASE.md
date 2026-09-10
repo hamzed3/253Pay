@@ -230,13 +230,9 @@ commande directement dans votre terminal, pas depuis un script automatisé.
 
 ## 8. Prochaine étape — PHASE 3
 
-Authentification et OTP :
-
-- inscription par téléphone, envoi et vérification d'OTP (Redis + table `otps`)
-- hachage du PIN en Argon2id, blocage progressif après échecs
-- JWT d'accès (15 min) et refresh token avec rotation et détection de réutilisation
-- `JwtGuard`, `RolesGuard`, décorateur `@CurrentUser`
-- premiers utilisateurs de test, avec de vrais hachages
+✅ Terminée. Voir [`PHASE_3_AUTH.md`](./PHASE_3_AUTH.md) : inscription par SMS,
+PIN haché en Argon2id, blocage progressif, vérification des nouveaux appareils
+et sessions avec rotation de jeton.
 
 ## Checklist
 

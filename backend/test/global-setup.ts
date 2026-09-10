@@ -68,4 +68,24 @@ export default async function globalSetup(): Promise<void> {
   // Hérité par les processus de test.
   process.env.DATABASE_URL = testUrl.toString();
   process.env.TEST_DATABASE_URL = testUrl.toString();
+
+  // Redis : on bascule sur la base 1, jamais la 0 utilisée en développement.
+  // Un test qui viderait les OTP en cours d'un développeur serait pénible.
+  const redisUrl = new URL(process.env.REDIS_URL ?? 'redis://localhost:6380');
+  redisUrl.pathname = '/1';
+  process.env.REDIS_URL = redisUrl.toString();
+
+  // Toutes les requêtes de test partent de 127.0.0.1. Les quotas PAR IP
+  // verraient donc un seul client très bavard : on les relâche, sans toucher
+  // aux quotas PAR NUMÉRO, qui sont la vraie protection métier et restent
+  // testés tels quels.
+  process.env.OTP_MAX_PER_IP_PER_HOUR = '10000';
+
+  // L'OTP doit être lisible dans la réponse pour que les tests puissent
+  // enchaîner. C'est le mode de développement, interdit en production.
+  process.env.OTP_EXPOSE_IN_RESPONSE = 'true';
+
+  // Signale à l'application qu'elle tourne en test : voir le `skipIf` du
+  // limiteur de débit dans app.module.ts.
+  process.env.NODE_ENV = 'test';
 }

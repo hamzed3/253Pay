@@ -1,6 +1,7 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
+import { Public } from '../../common/decorators/public.decorator';
 import { PrismaService } from '../../database/prisma.service';
 import { RedisService } from '../../database/redis.service';
 
@@ -15,6 +16,9 @@ import { RedisService } from '../../database/redis.service';
 @ApiTags('health')
 @Controller('health')
 @SkipThrottle()
+// Le JwtAuthGuard est global : sans @Public, l'orchestrateur (Docker,
+// Kubernetes) recevrait un 401 et croirait le service en panne.
+@Public()
 export class HealthController {
   constructor(
     private readonly prisma: PrismaService,

@@ -33,6 +33,9 @@ Thumbs.db
 # Prisma
 prisma/*.db
 
+# Redis (instantané écrit à l'arrêt du serveur)
+dump.rdb
+
 # Flutter (phases suivantes)
 mobile/build/
 mobile/.dart_tool/

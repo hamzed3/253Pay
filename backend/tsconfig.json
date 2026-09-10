@@ -6,6 +6,10 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
+    // Nécessaire pour `import x from 'paquet-commonjs'`. Sans lui,
+    // allowSyntheticDefaultImports fait taire le compilateur mais le code
+    // émis lit un `.default` inexistant : l'erreur n'apparaît qu'à l'exécution.
+    "esModuleInterop": true,
     "target": "ES2023",
     "sourceMap": true,
     "outDir": "./dist",

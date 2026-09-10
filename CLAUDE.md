@@ -64,7 +64,7 @@ Le projet avance **par phases**. Ne génère jamais tout d'un coup.
 
 - [x] **PHASE 1** — architecture et environnement ✅ terminée
 - [x] **PHASE 2** — base de données et migrations ✅ terminée
-- [ ] PHASE 3 — auth et OTP
+- [x] **PHASE 3** — auth et OTP ✅ terminée
 - [ ] PHASE 4 — wallet et ledger
 - [ ] PHASE 5 — transferts
 - [ ] PHASE 6 — dépôts et retraits (MockProvider)
@@ -82,18 +82,24 @@ avant de passer à la suite.
 
 ## État actuel
 
-PHASES 1 et 2 livrées. Le backend démarre, se connecte à PostgreSQL et Redis,
-expose `GET /health` et Swagger.
+PHASES 1 à 3 livrées.
 
 La base contient les 20 tables du projet, avec leurs contraintes et leurs
 déclencheurs : le ledger est immuable, un ledger déséquilibré est rejeté au
 COMMIT, un solde négatif est impossible et une transaction terminée est figée.
-Les données de référence (plan comptable système, tarifs, plafonds KYC,
-fournisseur MOCK) se chargent avec `npm run prisma:seed`.
+Les données de référence se chargent avec `npm run prisma:seed`.
 
-Aucune logique financière côté application pour l'instant : c'est la PHASE 4.
-Aucun utilisateur n'existe encore — créer un compte suppose le hachage du PIN,
-défini en PHASE 3.
+L'authentification fonctionne de bout en bout : inscription par SMS, connexion
+par code secret haché en Argon2id, blocage progressif, vérification des
+nouveaux appareils, sessions JWT avec rotation du jeton de renouvellement et
+détection de réutilisation. Les routes sont fermées par défaut (`JwtAuthGuard`
+global), on les ouvre avec `@Public()`.
+
+**Aucun opérateur SMS n'est branché** : le code se lit dans la réponse HTTP
+tant que `OTP_EXPOSE_IN_RESPONSE=true` (interdit en production).
+
+Aucune logique financière pour l'instant, et aucun portefeuille n'est encore
+créé à l'inscription : c'est la PHASE 4.
 
 ## Commandes
 
@@ -136,14 +142,32 @@ Vérification : `curl http://localhost:3000/health` doit renvoyer
         ├── main.ts           helmet, CORS, validation, Swagger
         ├── app.module.ts
         ├── config/           validation des variables d'env (Joi)
+        ├── bootstrap.ts      configuration partagée main.ts / tests
         ├── common/
         │   ├── money/        objet Money — à utiliser partout
+        │   ├── phone/        normalisation des numéros
+        │   ├── hashing/      Argon2id (PIN, OTP) et SHA-256 (jetons)
         │   ├── errors/       ErrorCode + BusinessError
+        │   ├── guards/       JwtAuthGuard, RolesGuard
+        │   ├── decorators/   @Public, @CurrentUser, @Roles
         │   ├── filters/      format d'erreur unique
         │   └── interceptors/ logs + masquage des champs sensibles
         ├── database/         PrismaService, RedisService
-        └── modules/health/
+        └── modules/
+            ├── health/
+            ├── auth/         inscription, OTP, connexion, sessions
+            ├── users/
+            └── audit/        journal des actions sensibles
 ```
+
+### Authentification
+
+- `@Public()` ouvre une route ; sans lui, elle exige un jeton.
+- `@CurrentUser()` injecte l'utilisateur, `@Roles('ADMIN')` restreint l'accès.
+- Le rôle est lu en base à chaque requête, jamais dans le corps de la requête.
+- PIN et OTP : Argon2id (secrets devinables). Jetons : SHA-256 (512 bits
+  d'aléa, rien à ralentir). Voir `src/common/hashing/hashing.service.ts`.
+- Tout numéro passe par `normalizePhone()` avant d'être lu ou écrit.
 
 ### Ce que la base garantit toute seule
 
