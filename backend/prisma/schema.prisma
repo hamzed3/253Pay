@@ -1,0 +1,813 @@
+// =====================================================================
+// 253Pay — schéma de base de données (PHASE 2)
+//
+// Ce fichier est la source de vérité de la structure des données.
+// Il suit la section 4 de docs/architecture.md.
+//
+// TROIS RÈGLES QUI EXPLIQUENT TOUT CE FICHIER :
+//
+// 1. Aucun montant n'est un nombre à virgule. Tous les montants sont des
+//    BigInt en unité mineure (1 000 FDJ = 100000). Voir src/common/money.
+// 2. Un solde n'est jamais modifié directement. Il résulte de la somme des
+//    écritures du ledger. wallets.availableMinor n'est qu'un cache.
+// 3. Une écriture de ledger ne se modifie ni ne se supprime, jamais.
+//    Ce n'est pas qu'une convention : un déclencheur PostgreSQL l'interdit
+//    (voir la migration).
+// =====================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =====================================================================
+// IDENTITÉ
+// =====================================================================
+
+enum UserRole {
+  USER
+  AGENT
+  MERCHANT
+  ADMIN
+}
+
+enum UserStatus {
+  PENDING // inscrit, téléphone pas encore vérifié
+  ACTIVE
+  SUSPENDED // suspension temporaire (enquête, incident)
+  BLOCKED // blocage sécurité (force brute sur le PIN)
+  CLOSED // compte fermé, conservé pour l'audit
+}
+
+model User {
+  id String @id @default(uuid()) @db.Uuid
+
+  // Le téléphone est l'identifiant principal à Djibouti : beaucoup
+  // d'utilisateurs n'ont pas d'adresse e-mail.
+  phone String  @unique @db.VarChar(20)
+  email String? @unique @db.VarChar(255)
+
+  firstName String @map("first_name") @db.VarChar(100)
+  lastName  String @map("last_name") @db.VarChar(100)
+
+  // Empreintes uniquement. Le PIN et le mot de passe en clair n'entrent
+  // jamais en base, ni dans les logs. Hachage Argon2id en PHASE 3.
+  pinHash      String  @map("pin_hash") @db.VarChar(255)
+  passwordHash String? @map("password_hash") @db.VarChar(255)
+
+  role   UserRole   @default(USER)
+  status UserStatus @default(PENDING)
+
+  // 0 = non vérifié · 1 = téléphone + identité déclarée · 2 = pièce vérifiée
+  // Le niveau KYC commande les plafonds (voir TransactionLimit).
+  kycLevel Int @default(0) @map("kyc_level") @db.SmallInt
+
+  phoneVerifiedAt DateTime? @map("phone_verified_at") @db.Timestamptz(6)
+  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz(6)
+
+  // Compteur de tentatives de PIN. Remis à zéro à chaque succès.
+  failedPinAttempts Int       @default(0) @map("failed_pin_attempts")
+  blockedUntil      DateTime? @map("blocked_until") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  profile          UserProfile?
+  devices          Device[]
+  refreshTokens    RefreshToken[]
+  wallets          Wallet[]
+  agent            Agent?
+  merchantLinks    MerchantUser[]
+  transactions     Transaction[]     @relation("TransactionInitiator")
+  kycVerifications KycVerification[]
+  notifications    Notification[]
+  auditLogs        AuditLog[]        @relation("AuditActor")
+
+  @@index([status])
+  @@index([role, status])
+  @@index([createdAt(sort: Desc)])
+  @@map("users")
+}
+
+model UserProfile {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @unique @map("user_id") @db.Uuid
+
+  birthDate   DateTime? @map("birth_date") @db.Date
+  address     String?   @db.VarChar(255)
+  city        String?   @db.VarChar(100)
+  nationality String?   @db.VarChar(100)
+  photoUrl    String?   @map("photo_url") @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB
+}
+
+model Device {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  deviceId String         @map("device_id") @db.VarChar(255)
+  platform DevicePlatform
+  model    String?        @db.VarChar(120)
+  fcmToken String?        @map("fcm_token") @db.VarChar(500)
+
+  // Un appareil de confiance évite de redemander un OTP à chaque connexion.
+  trusted    Boolean  @default(false)
+  lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Un même appareil physique ne peut être enregistré qu'une fois par compte.
+  @@unique([userId, deviceId])
+  @@index([userId])
+  @@map("devices")
+}
+
+model RefreshToken {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  // On stocke l'empreinte, pas le token : une fuite de la base ne donne
+  // aucun token utilisable.
+  tokenHash String  @unique @map("token_hash") @db.VarChar(255)
+  deviceId  String? @map("device_id") @db.VarChar(255)
+
+  // Rotation : chaque refresh remplace le précédent. Si un token déjà
+  // remplacé est réutilisé, c'est un vol -> on révoque toute la chaîne.
+  replacedById String? @unique @map("replaced_by_id") @db.Uuid
+
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  ip        String?   @db.VarChar(45)
+  userAgent String?   @map("user_agent") @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replacedBy RefreshToken? @relation("TokenRotation", fields: [replacedById], references: [id], onDelete: SetNull)
+  replaces   RefreshToken? @relation("TokenRotation")
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+enum OtpPurpose {
+  REGISTRATION
+  LOGIN
+  TRANSACTION
+  PIN_RESET
+}
+
+/// Miroir des OTP, pour l'audit et la détection d'abus.
+/// La vérification en temps réel se fait dans Redis (PHASE 3) : c'est rapide
+/// et le TTL y est natif. Cette table sert à répondre à « combien d'OTP ce
+/// numéro a-t-il demandés cette heure ? », ce que Redis oublie.
+model Otp {
+  id String @id @default(uuid()) @db.Uuid
+
+  phone    String     @db.VarChar(20)
+  codeHash String     @map("code_hash") @db.VarChar(255)
+  purpose  OtpPurpose
+
+  attempts  Int       @default(0)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  ip        String?   @db.VarChar(45)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([phone, createdAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("otps")
+}
+
+// =====================================================================
+// COMPTABILITÉ — le cœur du système
+// =====================================================================
+
+enum WalletStatus {
+  ACTIVE
+  FROZEN // gelé : lecture possible, aucun mouvement
+  CLOSED
+}
+
+/// Portefeuille d'un utilisateur.
+///
+/// ATTENTION : availableMinor et reservedMinor sont un CACHE de performance,
+/// pas la vérité. La vérité est la somme des écritures du ledger sur le
+/// compte correspondant. Une tâche de réconciliation compare les deux
+/// (PHASE 13) ; tout écart est une alerte.
+model Wallet {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  currency String       @default("DJF") @db.Char(3)
+  status   WalletStatus @default(ACTIVE)
+
+  availableMinor BigInt @default(0) @map("available_minor")
+  reservedMinor  BigInt @default(0) @map("reserved_minor")
+
+  // Compte du ledger correspondant à ce portefeuille. C'est là que vivent
+  // les écritures ; le portefeuille n'est que la vue métier.
+  ledgerAccountId String? @unique @map("ledger_account_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  ledgerAccount LedgerAccount? @relation(fields: [ledgerAccountId], references: [id], onDelete: Restrict)
+
+  outgoingTransactions Transaction[] @relation("TransactionSource")
+  incomingTransactions Transaction[] @relation("TransactionDestination")
+  agentFloat           Agent?        @relation("AgentFloatWallet")
+  merchant             Merchant?
+
+  // Un seul portefeuille par utilisateur et par devise.
+  @@unique([userId, currency])
+  @@index([status])
+  @@map("wallets")
+}
+
+enum LedgerOwnerType {
+  USER
+  AGENT
+  MERCHANT
+  SYSTEM
+}
+
+/// Plan comptable.
+///
+/// Convention retenue (comptabilité en partie double) :
+///   ASSET / EXPENSE      : le DÉBIT augmente le compte
+///   LIABILITY / REVENUE / EQUITY : le CRÉDIT augmente le compte
+///
+/// Le portefeuille d'un client est une DETTE de 253Pay envers lui
+/// (LIABILITY) : cet argent ne nous appartient pas, nous le devons.
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  REVENUE
+  EXPENSE
+  EQUITY
+}
+
+model LedgerAccount {
+  id String @id @default(uuid()) @db.Uuid
+
+  // Code lisible : SYSTEM_CASH, SYSTEM_REVENUE, WALLET_<uuid>...
+  code String @unique @db.VarChar(80)
+
+  ownerType LedgerOwnerType   @map("owner_type")
+  ownerId   String?           @map("owner_id") @db.Uuid
+  type      LedgerAccountType
+  currency  String            @default("DJF") @db.Char(3)
+  name      String            @db.VarChar(150)
+
+  // Un compte système ne se supprime pas et ne se ferme pas à la légère.
+  isSystem Boolean @default(false) @map("is_system")
+  active   Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  entries LedgerEntry[]
+  wallet  Wallet?
+
+  @@index([ownerType, ownerId])
+  @@index([type])
+  @@map("ledger_accounts")
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+/// Écriture comptable — le grand livre.
+///
+/// INSERT UNIQUEMENT. Aucun UPDATE, aucun DELETE, jamais, pour personne.
+/// Un déclencheur PostgreSQL rejette ces opérations (voir la migration) :
+/// même une requête manuelle en production ne peut pas réécrire l'histoire.
+///
+/// Pour chaque transaction, la somme des DEBIT doit égaler la somme des
+/// CREDIT. Un déséquilibre est un bug : ErrorCode.LEDGER_UNBALANCED.
+model LedgerEntry {
+  id String @id @default(uuid()) @db.Uuid
+
+  transactionId String @map("transaction_id") @db.Uuid
+  accountId     String @map("account_id") @db.Uuid
+
+  direction LedgerDirection
+
+  // TOUJOURS strictement positif. Le sens est porté par `direction`,
+  // jamais par le signe : un montant négatif rendrait toute somme ambiguë.
+  amountMinor BigInt @map("amount_minor")
+
+  // Solde du compte après cette écriture. Redondant avec la somme des
+  // écritures, mais permet de reconstituer un relevé sans tout recalculer.
+  balanceAfterMinor BigInt @map("balance_after_minor")
+
+  currency    String  @default("DJF") @db.Char(3)
+  description String? @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  transaction Transaction   @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  account     LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  // Relevé de compte : « les écritures du compte X, les plus récentes d'abord ».
+  @@index([accountId, createdAt(sort: Desc)])
+  @@index([transactionId])
+  @@map("ledger_entries")
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  TRANSFER
+  MERCHANT_PAYMENT
+  COMMISSION
+  FEE
+  REVERSAL
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REVERSED
+}
+
+/// Transaction — l'intention et son résultat.
+///
+/// Une transaction COMPLETED ne se modifie plus et ne se supprime jamais.
+/// Annuler consiste à créer une NOUVELLE transaction REVERSAL qui pointe
+/// vers l'originale via reversalOfId. L'historique reste vrai pour toujours :
+/// c'est exactement ce qu'un auditeur ou la Banque Centrale exigera.
+/// Un déclencheur PostgreSQL fait respecter cette règle.
+model Transaction {
+  id String @id @default(uuid()) @db.Uuid
+
+  // Référence lisible communiquée au client : TX-2026-000123
+  reference String @unique @db.VarChar(40)
+
+  type   TransactionType
+  status TransactionStatus @default(PENDING)
+
+  // Montant transféré, hors frais. Les frais sont portés à part : le client
+  // doit toujours voir « j'envoie X, cela me coûte X + Y ».
+  amountMinor BigInt @map("amount_minor")
+  feeMinor    BigInt @default(0) @map("fee_minor")
+  currency    String @default("DJF") @db.Char(3)
+
+  initiatorId String @map("initiator_id") @db.Uuid
+
+  sourceWalletId      String? @map("source_wallet_id") @db.Uuid
+  destinationWalletId String? @map("destination_wallet_id") @db.Uuid
+
+  providerId        String? @map("provider_id") @db.Uuid
+  providerReference String? @map("provider_reference") @db.VarChar(120)
+
+  // Le garde-fou anti-double-dépense. L'application mobile génère cette clé
+  // AVANT d'envoyer et la réutilise à chaque nouvelle tentative. L'index
+  // UNIQUE est la vraie protection : si deux requêtes passent la
+  // vérification applicative en même temps, PostgreSQL en rejette une.
+  // (Sous PostgreSQL, plusieurs NULL restent autorisés : les transactions
+  // internes sans clé ne se gênent pas entre elles.)
+  idempotencyKey String? @unique @map("idempotency_key") @db.VarChar(100)
+
+  // Transaction annulée par celle-ci (type REVERSAL uniquement).
+  reversalOfId String? @unique @map("reversal_of_id") @db.Uuid
+
+  metadata      Json?   @db.JsonB
+  failureReason String? @map("failure_reason") @db.VarChar(255)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  initiator         User             @relation("TransactionInitiator", fields: [initiatorId], references: [id], onDelete: Restrict)
+  sourceWallet      Wallet?          @relation("TransactionSource", fields: [sourceWalletId], references: [id], onDelete: Restrict)
+  destinationWallet Wallet?          @relation("TransactionDestination", fields: [destinationWalletId], references: [id], onDelete: Restrict)
+  provider          PaymentProvider? @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  reversalOf        Transaction?     @relation("TransactionReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy        Transaction?     @relation("TransactionReversal")
+
+  entries     LedgerEntry[]
+  commissions Commission[]
+
+  // « L'historique de mes transactions », l'écran le plus consulté de l'app.
+  //
+  // Il manque ici un index PARTIEL sur status, réservé aux transactions
+  // encore en cours : c'est celui qu'utilise la tâche de reprise. Prisma ne
+  // sait pas déclarer d'index partiel pour PostgreSQL ; il est donc créé en
+  // SQL dans la migration (transactions_status_in_flight_idx).
+  @@index([initiatorId, createdAt(sort: Desc)])
+  @@index([sourceWalletId, createdAt(sort: Desc)])
+  @@index([destinationWalletId, createdAt(sort: Desc)])
+  @@index([type, status])
+  @@index([providerReference])
+  @@map("transactions")
+}
+
+// =====================================================================
+// ACTEURS
+// =====================================================================
+
+enum AgentStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+/// Agent : commerce de proximité qui convertit espèces <-> monnaie
+/// électronique. Son « float » est le portefeuille qui porte son stock de
+/// monnaie électronique : un dépôt client le vide, un retrait client le remplit.
+model Agent {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @unique @map("user_id") @db.Uuid
+
+  agentCode     String @unique @map("agent_code") @db.VarChar(20)
+  floatWalletId String @unique @map("float_wallet_id") @db.Uuid
+
+  businessName String? @map("business_name") @db.VarChar(150)
+  zone         String? @db.VarChar(100)
+
+  // Commission de l'agent, en points de base (1 % = 100). Jamais un flottant.
+  commissionRateBp Int @default(0) @map("commission_rate_bp")
+
+  status AgentStatus @default(PENDING)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  floatWallet Wallet       @relation("AgentFloatWallet", fields: [floatWalletId], references: [id], onDelete: Restrict)
+  commissions Commission[]
+
+  @@index([status])
+  @@index([zone])
+  @@map("agents")
+}
+
+enum MerchantStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+model Merchant {
+  id String @id @default(uuid()) @db.Uuid
+
+  name         String  @db.VarChar(150)
+  merchantCode String  @unique @map("merchant_code") @db.VarChar(20)
+  category     String? @db.VarChar(80)
+  walletId     String  @unique @map("wallet_id") @db.Uuid
+
+  // Contenu du QR statique de la boutique. Ne contient jamais de montant :
+  // le montant est saisi par le client ou poussé par la caisse.
+  qrPayload String? @unique @map("qr_payload") @db.VarChar(500)
+
+  status MerchantStatus @default(PENDING)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  wallet Wallet         @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  users  MerchantUser[]
+
+  @@index([status])
+  @@map("merchants")
+}
+
+enum MerchantUserRole {
+  OWNER
+  CASHIER
+}
+
+model MerchantUser {
+  id         String @id @default(uuid()) @db.Uuid
+  merchantId String @map("merchant_id") @db.Uuid
+  userId     String @map("user_id") @db.Uuid
+
+  role        MerchantUserRole @default(CASHIER)
+  permissions Json?            @db.JsonB
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, userId])
+  @@index([userId])
+  @@map("merchant_users")
+}
+
+enum CommissionStatus {
+  PENDING
+  PAID
+  CANCELLED
+}
+
+model Commission {
+  id            String @id @default(uuid()) @db.Uuid
+  transactionId String @map("transaction_id") @db.Uuid
+  agentId       String @map("agent_id") @db.Uuid
+
+  amountMinor BigInt  @map("amount_minor")
+  currency    String  @default("DJF") @db.Char(3)
+  ruleId      String? @map("rule_id") @db.Uuid
+
+  status CommissionStatus @default(PENDING)
+  paidAt DateTime?        @map("paid_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  agent       Agent       @relation(fields: [agentId], references: [id], onDelete: Restrict)
+
+  // Une transaction ne génère qu'une commission par agent.
+  @@unique([transactionId, agentId])
+  @@index([agentId, status])
+  @@map("commissions")
+}
+
+// =====================================================================
+// CONFIGURATION ET CONTRÔLE
+// =====================================================================
+
+enum FeeType {
+  FLAT // montant fixe, en unité mineure
+  PERCENT // pourcentage, exprimé en points de base (1 % = 100)
+  TIERED // paliers décrits dans `tiers`
+}
+
+/// Règle de frais.
+///
+/// Les frais ne sont JAMAIS écrits en dur dans le code : ils changent, et un
+/// changement de tarif ne doit pas exiger un déploiement. `version` et
+/// `active` permettent de conserver l'ancienne règle pour expliquer, six mois
+/// plus tard, pourquoi telle transaction a coûté tel montant.
+model FeeRule {
+  id String @id @default(uuid()) @db.Uuid
+
+  name            String          @db.VarChar(120)
+  transactionType TransactionType @map("transaction_type")
+
+  // NULL = s'applique à tous les profils.
+  userType UserRole? @map("user_type")
+
+  // Bornes du palier, en unité mineure. NULL = pas de borne.
+  minAmountMinor BigInt? @map("min_amount_minor")
+  maxAmountMinor BigInt? @map("max_amount_minor")
+
+  feeType FeeType @map("fee_type")
+
+  // FLAT : unité mineure. PERCENT : points de base. Toujours un entier.
+  feeValue Int @map("fee_value")
+
+  // Plafond de frais, en unité mineure. Protège le gros montant.
+  capMinor   BigInt? @map("cap_minor")
+  floorMinor BigInt? @map("floor_minor")
+
+  tiers Json? @db.JsonB
+
+  currency String  @default("DJF") @db.Char(3)
+  active   Boolean @default(true)
+  version  Int     @default(1)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([name, version])
+  @@index([transactionType, active])
+  @@map("fee_rules")
+}
+
+enum LimitScope {
+  USER
+  AGENT
+  MERCHANT
+}
+
+enum LimitPeriod {
+  SINGLE // par opération
+  DAILY
+  MONTHLY
+}
+
+/// Plafond de transaction par niveau KYC.
+///
+/// C'est ici que se joue une partie de la conformité anti-blanchiment :
+/// un compte non vérifié ne doit pas pouvoir déplacer de gros montants.
+model TransactionLimit {
+  id String @id @default(uuid()) @db.Uuid
+
+  scope    LimitScope
+  kycLevel Int         @map("kyc_level") @db.SmallInt
+  period   LimitPeriod
+
+  // NULL = s'applique à tous les types d'opération.
+  transactionType TransactionType? @map("transaction_type")
+
+  maxAmountMinor BigInt @map("max_amount_minor")
+  maxCount       Int?   @map("max_count")
+
+  currency String  @default("DJF") @db.Char(3)
+  active   Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Attention : transactionType est nullable, et sous PostgreSQL deux NULL
+  // sont considérés comme distincts. Cette contrainte ne protège donc QUE
+  // les règles ciblant un type précis. Le cas « tous types » (NULL) est
+  // couvert par un index unique partiel créé en SQL dans la migration
+  // (transaction_limits_all_types_key).
+  @@unique([scope, kycLevel, period, transactionType])
+  @@map("transaction_limits")
+}
+
+enum ProviderStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// Fournisseur de paiement.
+///
+/// Tant qu'il n'existe pas d'API officielle ET d'accord signé avec un
+/// partenaire, seul MOCK est ACTIVE. Aucune intégration réelle n'est écrite.
+model PaymentProvider {
+  id String @id @default(uuid()) @db.Uuid
+
+  code String @unique @db.VarChar(40)
+  name String @db.VarChar(120)
+
+  status    ProviderStatus @default(INACTIVE)
+  isSandbox Boolean        @default(true) @map("is_sandbox")
+
+  // Secrets chiffrés au niveau applicatif avant écriture. Cette colonne ne
+  // doit jamais contenir de clé en clair.
+  config Json? @db.JsonB
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  transactions  Transaction[]
+  webhookEvents WebhookEvent[]
+
+  @@map("payment_providers")
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum KycDocumentType {
+  NATIONAL_ID
+  PASSPORT
+  RESIDENCE_PERMIT
+  DRIVING_LICENSE
+}
+
+model KycVerification {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  level        Int             @db.SmallInt
+  status       KycStatus       @default(PENDING)
+  documentType KycDocumentType @map("document_type")
+
+  // Le numéro de pièce est HACHÉ, jamais stocké en clair : c'est une donnée
+  // personnelle sensible. Le hachage suffit à détecter un doublon.
+  documentNumberHash String @map("document_number_hash") @db.VarChar(255)
+
+  documentUrl String? @map("document_url") @db.VarChar(500)
+  selfieUrl   String? @map("selfie_url") @db.VarChar(500)
+
+  reviewedBy      String?   @map("reviewed_by") @db.Uuid
+  reviewedAt      DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  rejectionReason String?   @map("rejection_reason") @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Une même pièce ne peut pas servir à vérifier deux comptes.
+  @@unique([documentType, documentNumberHash])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status])
+  @@map("kyc_verifications")
+}
+
+/// Événement reçu d'un fournisseur.
+///
+/// externalId est UNIQUE : les partenaires renvoient souvent le même
+/// événement plusieurs fois, et un dépôt ne doit être crédité qu'une fois.
+/// Les payloads dont la signature est invalide sont conservés eux aussi :
+/// ils sont la trace d'une tentative de fraude.
+model WebhookEvent {
+  id         String  @id @default(uuid()) @db.Uuid
+  providerId String? @map("provider_id") @db.Uuid
+
+  eventType  String @map("event_type") @db.VarChar(80)
+  externalId String @unique @map("external_id") @db.VarChar(180)
+
+  signatureValid Boolean @default(false) @map("signature_valid")
+  payload        Json    @db.JsonB
+
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(6)
+  attempts    Int       @default(0)
+  lastError   String?   @map("last_error") @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  provider PaymentProvider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+
+  @@index([processedAt])
+  @@index([eventType, createdAt(sort: Desc)])
+  @@map("webhook_events")
+}
+
+/// Journal des actions sensibles. Ce qui n'est pas journalisé n'existe pas.
+model AuditLog {
+  id String @id @default(uuid()) @db.Uuid
+
+  // NULL quand l'action vient du système (tâche planifiée, webhook).
+  actorId   String?   @map("actor_id") @db.Uuid
+  actorRole UserRole? @map("actor_role")
+
+  action     String  @db.VarChar(100)
+  entityType String  @map("entity_type") @db.VarChar(80)
+  entityId   String? @map("entity_id") @db.VarChar(80)
+
+  before Json? @db.JsonB
+  after  Json? @db.JsonB
+
+  ip        String? @db.VarChar(45)
+  userAgent String? @map("user_agent") @db.VarChar(255)
+  reason    String? @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+enum NotificationType {
+  TRANSACTION
+  SECURITY
+  KYC
+  PROMOTION
+  SYSTEM
+}
+
+model Notification {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  type  NotificationType
+  title String           @db.VarChar(150)
+  body  String           @db.VarChar(500)
+  data  Json?            @db.JsonB
+
+  readAt DateTime? @map("read_at") @db.Timestamptz(6)
+  sentAt DateTime? @map("sent_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, readAt])
+  @@map("notifications")
+}

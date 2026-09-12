@@ -1,0 +1,13 @@
+-- Référence lisible des transactions : TX-2026-000123
+--
+-- POURQUOI une séquence PostgreSQL plutôt qu'un compteur applicatif :
+-- une séquence est atomique et ne rejoue jamais un numéro, même avec vingt
+-- serveurs en parallèle. Un `SELECT MAX(...) + 1` donnerait deux fois le même
+-- numéro à deux requêtes simultanées — et la contrainte UNIQUE ferait échouer
+-- un paiement parfaitement légitime.
+--
+-- Particularité utile : une séquence ne revient PAS en arrière si la
+-- transaction échoue. Il y aura donc des trous dans la numérotation. C'est
+-- voulu : un numéro consommé n'est jamais réattribué, ce qui garantit qu'une
+-- référence communiquée à un client désigne toujours la même opération.
+CREATE SEQUENCE "transaction_reference_seq" START 1;
