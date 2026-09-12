@@ -17,6 +17,10 @@ import { WalletsModule } from './modules/wallets/wallets.module';
 import { FeesModule } from './modules/fees/fees.module';
 import { LimitsModule } from './modules/limits/limits.module';
 import { TransfersModule } from './modules/transfers/transfers.module';
+import { PaymentsModule } from './modules/payments/payments.module';
+import { DepositsModule } from './modules/deposits/deposits.module';
+import { WithdrawalsModule } from './modules/withdrawals/withdrawals.module';
+import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { HashingModule } from './common/hashing/hashing.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -76,13 +80,17 @@ import { RolesGuard } from './common/guards/roles.guard';
     LedgerModule,
     FeesModule,
     LimitsModule,
+    PaymentsModule,
 
     HealthModule,
     UsersModule,
     AuthModule,
     WalletsModule,
     TransfersModule,
-    // PHASE 6 : DepositsModule, WithdrawalsModule
+    DepositsModule,
+    WithdrawalsModule,
+    WebhooksModule,
+    // PHASE 7 : AgentsModule
   ],
 
   // L'ORDRE COMPTE : les gardes s'exécutent dans l'ordre de déclaration.

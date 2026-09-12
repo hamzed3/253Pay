@@ -22,10 +22,24 @@ export interface LimitUsage {
  * ne changera pas ; les valeurs, elles, viennent de la base et devront être
  * alignées sur les textes de la Banque Centrale de Djibouti.
  *
- * Seules les opérations SORTANTES sont comptées. Recevoir de l'argent ne
- * consomme pas le plafond de celui qui reçoit — sinon un client pourrait
- * bloquer le compte d'un autre en lui envoyant de petites sommes.
+ * LE SENS COMPTE. Les opérations sortantes (transfert, retrait) et entrantes
+ * (dépôt) consomment des compteurs SÉPARÉS.
+ *
+ * Pourquoi séparés plutôt qu'un seul : recevoir de l'argent ne doit pas
+ * consommer le plafond de sortie de celui qui reçoit, sinon il suffirait de
+ * lui envoyer de petites sommes pour bloquer son compte pour la journée.
+ *
+ * Pourquoi limiter aussi les entrées : un compte non vérifié qui peut
+ * encaisser sans limite est un point d'entrée pour du blanchiment, même si
+ * l'argent ressort ensuite au compte-gouttes.
  */
+export type LimitDirection = 'OUT' | 'IN';
+
+/** Les dépôts font entrer l'argent ; tout le reste le fait sortir. */
+export function directionOf(type: TransactionType): LimitDirection {
+  return type === 'DEPOSIT' ? 'IN' : 'OUT';
+}
+
 @Injectable()
 export class LimitsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -44,6 +58,7 @@ export class LimitsService {
     options: { client?: Prisma.TransactionClient; now?: Date } = {},
   ): Promise<void> {
     const now = options.now ?? new Date();
+    const direction = directionOf(type);
 
     // Le contrôle DOIT pouvoir s'exécuter dans la transaction du ledger, sous
     // le verrou des comptes. Sinon, deux transferts simultanés le passent tous
@@ -74,7 +89,7 @@ export class LimitsService {
         continue;
       }
 
-      const usage = await this.usageSince(user.id, debut, amount.currency, db);
+      const usage = await this.usageSince(user.id, debut, amount.currency, direction, db);
 
       if (usage.amountMinor + amount.minor > limit.maxAmountMinor) {
         throw this.exceeded(limit.period, limit.maxAmountMinor, amount.currency, {
@@ -110,7 +125,7 @@ export class LimitsService {
     for (const limit of limits) {
       const debut = periodStart(limit.period, now);
       const usage = debut
-        ? await this.usageSince(user.id, debut, currency)
+        ? await this.usageSince(user.id, debut, currency, 'OUT')
         : { amountMinor: 0n, count: 0 };
 
       const restant = limit.maxAmountMinor - usage.amountMinor;
@@ -129,29 +144,38 @@ export class LimitsService {
   }
 
   /**
-   * Somme des opérations sortantes du client depuis une date.
+   * Somme des opérations du client dans un sens donné, depuis une date.
    *
-   * `sourceWalletId` non nul identifie une sortie d'argent. Les transactions
-   * échouées ou annulées ne comptent pas : seul ce qui est réellement parti
-   * consomme un plafond.
+   * Les transactions en cours (PROCESSING) sont comptées, pas seulement les
+   * terminées : sinon il suffirait de lancer dix retraits d'un coup et de
+   * laisser le partenaire les confirmer plus tard pour franchir le plafond.
+   * Une opération échouée, elle, ne consomme rien.
    */
   private async usageSince(
     userId: string,
     since: Date,
     currency: string,
+    direction: LimitDirection,
     db: Prisma.TransactionClient | PrismaService = this.prisma,
   ): Promise<{ amountMinor: bigint; count: number }> {
-    const [row] = await db.$queryRaw<{ total: bigint; nombre: bigint }[]>`
+    const colonne = direction === 'OUT' ? 'source_wallet_id' : 'destination_wallet_id';
+
+    const [row] = await db.$queryRawUnsafe<{ total: bigint; nombre: bigint }[]>(
+      `
       SELECT
         COALESCE(SUM(t."amount_minor"), 0)::bigint AS "total",
         COUNT(*)::bigint AS "nombre"
       FROM "transactions" t
-      JOIN "wallets" w ON w."id" = t."source_wallet_id"
-      WHERE w."user_id" = ${userId}::uuid
-        AND t."currency" = ${currency}
+      JOIN "wallets" w ON w."id" = t."${colonne}"
+      WHERE w."user_id" = $1::uuid
+        AND t."currency" = $2
         AND t."status" IN ('PENDING', 'PROCESSING', 'COMPLETED')
-        AND t."created_at" >= ${since}
-    `;
+        AND t."created_at" >= $3
+      `,
+      userId,
+      currency,
+      since,
+    );
 
     return { amountMinor: BigInt(row.total), count: Number(row.nombre) };
   }

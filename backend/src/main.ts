@@ -7,7 +7,10 @@ import { configureApp, setupSwagger } from './bootstrap';
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+  // rawBody : conserve le corps brut des requêtes, indispensable pour vérifier
+  // la signature des webhooks. Re-sérialiser du JSON ne redonne pas les mêmes
+  // octets, et la signature ne correspondrait plus.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   const config = app.get(ConfigService);
 
   const apiPrefix = configureApp(app, config);

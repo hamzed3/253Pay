@@ -257,14 +257,12 @@ C'est volontaire (voir §4). Passez par `/api/auth/pin/reset`.
 
 ## 11. Prochaine étape — PHASE 6
 
-Dépôts et retraits, avec `MockPaymentProvider` :
+✅ Terminée. Voir [`PHASE_6_DEPOSITS_WITHDRAWALS.md`](./PHASE_6_DEPOSITS_WITHDRAWALS.md) :
+dépôts et retraits en deux temps, webhooks signés et idempotents.
 
-- interface `PaymentProvider` et son implémentation simulée ;
-- dépôt : `SYSTEM_CASH` → portefeuille client, en passant par `SYSTEM_SUSPENSE`
-  tant que le partenaire n'a pas confirmé ;
-- retrait : contrôle de provision, puis sortie ;
-- `reserved_minor` enfin utilisé, pour bloquer un montant en attente ;
-- webhooks signés et idempotents (`webhook_events.external_id`).
+> Un point y a changé : `reserved_minor` n'est finalement **pas** utilisé.
+> Le compte `SYSTEM_SUSPENSE` fait le même travail dans le ledger, sans créer
+> un second cache à tenir synchronisé. Explication en §6 de ce document.
 
 ## Checklist
 

@@ -41,6 +41,11 @@ export const envValidationSchema = Joi.object({
   PIN_LENGTH: Joi.number().integer().min(4).max(6).default(4),
   PIN_MAX_ATTEMPTS: Joi.number().integer().min(1).max(10).default(3),
 
+  // --- Partenaires de paiement (PHASE 6) ---
+  // Secret de signature des webhooks. Obligatoire et sans valeur par défaut :
+  // un webhook non signé permettrait à n'importe qui de créditer un compte.
+  MOCK_PROVIDER_WEBHOOK_SECRET: Joi.string().min(16).required(),
+
   DEFAULT_CURRENCY: Joi.string().length(3).uppercase().default('DJF'),
   CURRENCY_SCALE: Joi.number().integer().min(0).max(4).default(2),
 

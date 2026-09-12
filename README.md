@@ -1,8 +1,8 @@
 # 253Pay — Backend
 
 Plateforme de paiement numérique pour Djibouti.
-**État : PHASE 5 — transferts entre clients opérationnels.
-Aucun argent n'entre ni ne sort encore du système : c'est la PHASE 6.**
+**État : PHASE 6 — dépôts, retraits et transferts opérationnels.
+Aucun partenaire réel n'est branché : seul `MockPaymentProvider` existe.**
 
 ## Démarrage rapide
 
@@ -30,11 +30,12 @@ npm run start:dev
 | `POST /api/auth/otp/request` | Un code de vérification (voir `devCode`) |
 | `GET /api/wallets/me` | Le solde du portefeuille |
 | `POST /api/transfers/quote` | Montant, frais et total avant envoi |
+| `POST /api/deposits` | Un dépôt en attente de confirmation |
 
 ```bash
 cd backend
 npm test                      # 70 tests unitaires (aucune base requise)
-npm run test:integration      # 95 tests contre PostgreSQL + Redis
+npm run test:integration      # 124 tests contre PostgreSQL + Redis
 npm run prisma:studio         # explorateur de base sur :5555
 ```
 
@@ -81,7 +82,7 @@ npm run prisma:studio         # explorateur de base sur :5555
 - [x] **PHASE 3** — authentification et OTP
 - [x] **PHASE 4** — wallet et ledger
 - [x] **PHASE 5** — transferts
-- [ ] PHASE 6 — dépôts et retraits (MockProvider)
+- [x] **PHASE 6** — dépôts et retraits (MockProvider)
 - [ ] PHASE 7 — agents
 - [ ] PHASE 8 — marchands et QR
 - [ ] PHASE 9 — KYC

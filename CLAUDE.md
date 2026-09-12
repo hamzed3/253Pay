@@ -67,7 +67,7 @@ Le projet avance **par phases**. Ne génère jamais tout d'un coup.
 - [x] **PHASE 3** — auth et OTP ✅ terminée
 - [x] **PHASE 4** — wallet et ledger ✅ terminée
 - [x] **PHASE 5** — transferts ✅ terminée
-- [ ] PHASE 6 — dépôts et retraits (MockProvider)
+- [x] **PHASE 6** — dépôts et retraits (MockProvider) ✅ terminée
 - [ ] PHASE 7 — agents
 - [ ] PHASE 8 — marchands et QR
 - [ ] PHASE 9 — KYC
@@ -110,9 +110,18 @@ calculés par le serveur depuis `fee_rules`, plafonds KYC appliqués **dans** la
 transaction du ledger, et annulation par écriture inverse réservée aux
 administrateurs.
 
-Aucun argent n'entre ni ne sort encore du système : dépôts et retraits sont la
-PHASE 6. Pour approvisionner un compte en développement, il faut écrire
-directement via `LedgerService.post()`.
+Les dépôts et retraits fonctionnent via l'abstraction `PaymentProvider`, dont
+la seule implémentation est `MockPaymentProvider` — qui ne contacte rien. Une
+opération se fait en DEUX TEMPS : un dépôt n'écrit rien au ledger tant que le
+partenaire n'a pas confirmé ; un retrait sort l'argent du portefeuille
+immédiatement, vers `SYSTEM_SUSPENSE`, et ne le verse qu'à la confirmation.
+
+Les webhooks (`POST /api/webhooks/:code`) sont publics mais signés en
+HMAC-SHA256 sur le corps **brut**, idempotents par `external_id`, et leur
+montant est comparé à la transaction locale avant tout mouvement.
+
+Aucun partenaire réel n'est branché : en développement, il faut envoyer le
+webhook soi-même (voir `docs/PHASE_6_DEPOSITS_WITHDRAWALS.md`, §4).
 
 ## Commandes
 
@@ -175,6 +184,10 @@ Vérification : `curl http://localhost:3000/health` doit renvoyer
             ├── fees/         grille tarifaire, lue en base
             ├── limits/       plafonds par niveau KYC
             ├── transfers/    envoi d'argent entre clients
+            ├── payments/     interface PaymentProvider + simulateur
+            ├── deposits/     entrées d'argent, en deux temps
+            ├── withdrawals/  sorties d'argent, via le compte d'attente
+            ├── webhooks/     notifications partenaires, signées
             └── audit/        journal des actions sensibles
 ```
 
@@ -212,6 +225,21 @@ franchissaient le plafond journalier.
 `LedgerService.post()` accepte pour cela un point d'accroche `beforeWrite(tx)`,
 exécuté dans sa transaction, une fois les comptes verrouillés. Tout nouveau
 contrôle de ce type (plafonds, float agent, limites marchand) doit y passer.
+
+### Opérations avec un partenaire extérieur
+
+- Une opération en attente est `PROCESSING`. Elle se dénoue par
+  `LedgerService.settle()` (avec écritures) ou `failPending()` (sans).
+- Un dépôt n'écrit RIEN tant que le partenaire n'a pas confirmé : inscrire un
+  argent non encaissé permettrait de dépenser ce qui n'existe pas.
+- Un retrait débite le portefeuille TOUT DE SUITE, vers `SYSTEM_SUSPENSE`, sans
+  quoi le client dépenserait deux fois la même somme.
+- `SYSTEM_SUSPENSE` doit toujours revenir à zéro. Un solde qui traîne est une
+  alerte.
+- La signature d'un webhook porte sur le corps BRUT (`rawBody: true` au
+  démarrage). Re-sérialiser du JSON change les octets.
+- Le montant annoncé par un partenaire n'est JAMAIS cru : il est comparé à la
+  transaction locale.
 
 ### Ce que la base garantit toute seule
 

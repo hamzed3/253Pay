@@ -25,6 +25,17 @@ export interface PostingInput {
   providerReference?: string;
   metadata?: Prisma.InputJsonValue;
   reversalOfId?: string;
+
+  /**
+   * Statut de la transaction créée. COMPLETED par défaut.
+   *
+   * PROCESSING sert aux opérations qui dépendent d'un partenaire extérieur :
+   * l'argent a déjà quitté le portefeuille du client (il ne peut donc pas le
+   * dépenser deux fois) mais l'opération n'est pas terminée tant que le
+   * partenaire n'a pas confirmé.
+   */
+  status?: Extract<TransactionStatus, 'COMPLETED' | 'PROCESSING'>;
+
   /** Les écritures. Leur somme des débits doit égaler celle des crédits. */
   legs: LedgerLeg[];
 
@@ -119,7 +130,6 @@ export class LedgerService {
           data: {
             reference,
             type: input.type,
-            status: TransactionStatus.COMPLETED,
             amountMinor: input.amountMinor,
             feeMinor: input.feeMinor ?? 0n,
             currency,
@@ -131,9 +141,11 @@ export class LedgerService {
             providerReference: input.providerReference,
             reversalOfId: input.reversalOfId,
             metadata: input.metadata,
+            status: input.status ?? TransactionStatus.COMPLETED,
             // La contrainte transactions_completed_at_coherent (PHASE 2)
-            // impose une date de fin dès que le statut est COMPLETED.
-            completedAt: new Date(),
+            // impose une date de fin dès que le statut est COMPLETED — et
+            // l'interdit tant que l'opération est en cours.
+            completedAt: (input.status ?? 'COMPLETED') === 'COMPLETED' ? new Date() : null,
           },
         });
 
@@ -157,6 +169,141 @@ export class LedgerService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Ouvre une transaction EN ATTENTE, sans aucune écriture comptable.
+   *
+   * POURQUOI une transaction sans écriture : un dépôt initié ne déplace rien.
+   * Le client a demandé à verser 10 000 FDJ, mais tant que le partenaire n'a
+   * pas encaissé, cet argent n'existe pas chez nous. L'inscrire au ledger
+   * reviendrait à écrire dans les comptes une somme que nous ne détenons pas.
+   *
+   * La ligne `transactions` existe quand même : elle porte la référence
+   * communiquée au client, la clé d'idempotence, et permet de suivre l'état.
+   */
+  async openPending(input: Omit<PostingInput, 'legs' | 'status'>): Promise<PostingResult> {
+    if (input.idempotencyKey) {
+      const existing = await this.prisma.transaction.findUnique({
+        where: { idempotencyKey: input.idempotencyKey },
+      });
+      if (existing) return { transaction: existing, replayed: true };
+    }
+
+    try {
+      const transaction = await this.prisma.$transaction(async (tx) => {
+        if (input.beforeWrite) await input.beforeWrite(tx);
+
+        return tx.transaction.create({
+          data: {
+            reference: await this.nextReference(tx),
+            type: input.type,
+            status: TransactionStatus.PROCESSING,
+            amountMinor: input.amountMinor,
+            feeMinor: input.feeMinor ?? 0n,
+            currency: input.currency ?? 'DJF',
+            initiatorId: input.initiatorId,
+            sourceWalletId: input.sourceWalletId,
+            destinationWalletId: input.destinationWalletId,
+            idempotencyKey: input.idempotencyKey,
+            providerId: input.providerId,
+            providerReference: input.providerReference,
+            metadata: input.metadata,
+          },
+        });
+      });
+
+      return { transaction, replayed: false };
+    } catch (error) {
+      if (input.idempotencyKey && this.isUniqueViolation(error, 'idempotency_key')) {
+        const existing = await this.prisma.transaction.findUnique({
+          where: { idempotencyKey: input.idempotencyKey },
+        });
+        if (existing) return { transaction: existing, replayed: true };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Dénoue une transaction en attente : écrit ses écritures et fixe son statut.
+   *
+   * Utilisé quand le partenaire confirme (COMPLETED) comme quand il échoue
+   * (FAILED, avec les écritures qui rendent l'argent au client).
+   *
+   * Un échec n'efface rien : les écritures de retour s'ajoutent à celles du
+   * départ, et leur somme est nulle. L'historique montre l'argent parti puis
+   * revenu — c'est ce qu'un auditeur veut voir, pas une ligne disparue.
+   */
+  async settle(
+    transactionId: string,
+    legs: LedgerLeg[],
+    options: { status: Extract<TransactionStatus, 'COMPLETED' | 'FAILED'>; failureReason?: string },
+  ): Promise<Transaction> {
+    assertBalanced(legs);
+
+    return this.prisma.$transaction(async (tx) => {
+      // Verrou sur la transaction elle-même : deux webhooks du même partenaire
+      // arrivant ensemble ne doivent pas la dénouer deux fois.
+      await tx.$queryRaw`
+        SELECT "id" FROM "transactions" WHERE "id" = ${transactionId}::uuid FOR UPDATE
+      `;
+
+      const transaction = await tx.transaction.findUniqueOrThrow({ where: { id: transactionId } });
+
+      if (transaction.status !== TransactionStatus.PROCESSING) {
+        throw new BusinessError(
+          ErrorCode.TRANSACTION_NOT_PENDING,
+          `Cette opération n'est plus en attente (statut : ${transaction.status}).`,
+          409,
+        );
+      }
+
+      const locked = await this.lockAccounts(tx, legs);
+      this.assertSufficientFunds(legs, locked);
+
+      await this.writeEntries(tx, transaction.id, transaction.currency, legs, locked);
+      await this.refreshWalletCaches(tx, locked);
+
+      return tx.transaction.update({
+        where: { id: transaction.id },
+        data: {
+          status: options.status,
+          failureReason: options.failureReason?.slice(0, 255),
+          // La contrainte de la PHASE 2 exige une date de fin sur COMPLETED.
+          completedAt: options.status === TransactionStatus.COMPLETED ? new Date() : null,
+        },
+      });
+    });
+  }
+
+  /**
+   * Clôt une transaction en attente qui n'a rien déplacé.
+   *
+   * Cas du dépôt jamais encaissé : aucune écriture n'a été faite au départ, il
+   * n'y a donc rien à rendre. On se contente de fermer la ligne.
+   */
+  async failPending(transactionId: string, reason: string): Promise<Transaction> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT "id" FROM "transactions" WHERE "id" = ${transactionId}::uuid FOR UPDATE
+      `;
+
+      const transaction = await tx.transaction.findUniqueOrThrow({ where: { id: transactionId } });
+
+      if (transaction.status !== TransactionStatus.PROCESSING) {
+        throw new BusinessError(
+          ErrorCode.TRANSACTION_NOT_PENDING,
+          `Cette opération n'est plus en attente (statut : ${transaction.status}).`,
+          409,
+        );
+      }
+
+      return tx.transaction.update({
+        where: { id: transaction.id },
+        data: { status: TransactionStatus.FAILED, failureReason: reason.slice(0, 255) },
+      });
+    });
   }
 
   /** Solde réel d'un compte, calculé depuis les écritures. */

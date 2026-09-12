@@ -26,7 +26,7 @@ beforeAll(async () => {
     .useValue({ canActivate: () => true })
     .compile();
 
-  app = moduleRef.createNestApplication();
+  app = moduleRef.createNestApplication({ rawBody: true });
   configureApp(app, app.get(ConfigService));
   await app.init();
 });
