@@ -1,4 +1,4 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication, RequestMethod, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
@@ -23,9 +23,17 @@ export function configureApp(app: INestApplication, config: ConfigService): stri
   const corsOrigins = config.get<string[]>('corsOrigins') ?? [];
   app.enableCors({ origin: corsOrigins.length ? corsOrigins : true, credentials: true });
 
-  // Toutes les routes sont préfixées par /api, sauf /health.
+  // Toutes les routes sont préfixées par /api, sauf deux exceptions.
+  //
+  // `/health` : l'orchestrateur (Docker, Kubernetes) l'interroge à une adresse
+  // fixe, indépendante de la version de l'API.
+  //
+  // `/` : sans cette exclusion, le contrôleur racine serait monté sur `/api` et
+  // la racine du domaine continuerait de renvoyer un 404 nu.
   const apiPrefix = config.get<string>('apiPrefix', 'api');
-  app.setGlobalPrefix(apiPrefix, { exclude: ['health'] });
+  app.setGlobalPrefix(apiPrefix, {
+    exclude: ['health', { path: '/', method: RequestMethod.GET }],
+  });
 
   // Validation stricte de toute entrée.
   // forbidNonWhitelisted : un champ inconnu fait échouer la requête. Sur une
